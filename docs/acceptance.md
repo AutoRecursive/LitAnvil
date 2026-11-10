@@ -14,7 +14,7 @@
 - Real browser stop/clear/reconnect and multiple-tab synchronization (transport tests cover stop/clear/resume; real restart/resume already verified).
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - Global plugins/MCP currently inherited; restrict to intended project config without changing global config.
-- Further visual selection checks at different zooms, multiline agent preview, and manual page navigation.
+- Further visual selection checks at different zooms, multiline agent preview, (manual page navigation verified below).
 - Extend MCP reader controls with accurate UI state, loaded-page acknowledgement, tab targeting and remaining document/annotation operations.
 - Final runtime launch audit, project settings isolation and completion of the remaining interaction checks.
 
@@ -73,3 +73,10 @@
 - Browser recovery checks use an isolated temporary DB/uploads/notes and a deterministic transport, never the user's real library: document delete→undo, recycle-bin restore, annotation delete→undo/restore, restored PDF rendering/highlight/math, Tab containment, Esc, Enter and focus return all verified. Temporary data removed and the real server restored.
 - Isolation exposed a dev file-address bug: PDF assets now resolve against the API origin, with matching agent readiness checks. Restored fixture PDF rendered from the isolated backend rather than Vite's filesystem.
 - 48 tests pass; production build passes with the existing bundle-size advisory.
+
+## Reading position and page navigation (2026-11-10)
+- Replaced the static black page-count badge with a compact toolbar control: current page/total, previous/next and validated Enter-to-jump input. Invalid page values revert; Escape cancels input.
+- Per-document local positions record page and within-page fraction, with backend progress as fallback. Restoration waits for the matching PDF source and all reserved page dimensions; opening another document cannot use the previous PDF's geometry.
+- Scroll writes are debounced, include tiny movements, flush when leaving a document, and use keepalive for pending unload requests. Queued writes retain their document ID; progress updates do not reinitialize the active reader.
+- Real browser: Attention page 4 → reload → page 4; zoom to 110% retains page 4; next → page 5 → library → reopen restores page 5. Switching to Causal Forcing++ and navigating independently does not overwrite Attention's position. At 390px, page tools remain usable without horizontal overflow and all 15 page slots remain present.
+- 53 tests pass, including delayed PDF geometry, source mismatch, malformed storage/backend fallback, small-scroll debounce/close flush, cross-document isolation and page-input validation. Production build passes with the existing bundle-size advisory.

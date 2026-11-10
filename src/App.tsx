@@ -8,6 +8,8 @@ import { Chat } from "./Chat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useReaderBridge } from "./useReaderBridge";
 import { PdfReader } from "./PdfReader";
+import { PageNavigation } from "./PageNavigation";
+import { useReadingPosition } from "./useReadingPosition";
 
 type Doc = {
   id: string;
@@ -413,27 +415,22 @@ export function App() {
     if (selected)
       window.open(`${API}/documents/${selected.id}/export.md`, "_blank");
   }
-  function saveProgress(e: React.UIEvent<HTMLElement>) {
-    if (!selected) return;
-    const el = e.currentTarget;
-    const progress = Math.min(
-      1,
-      Math.max(
-        0,
-        el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight),
-      ),
-    );
-    if (Math.abs(progress - selected.progress) > 0.02) {
-      const next = { ...selected, progress };
-      setSelected(next);
-      setDocs((x) => x.map((d) => (d.id === next.id ? next : d)));
-      api(`/documents/${selected.id}`, {
+  const pagination = useReadingPosition({
+    id: selected?.id,
+    source: selected?.fileUrl ? assetUrl(selected.fileUrl) : undefined,
+    initialProgress: selected?.progress || 0,
+    reader,
+    persist: async (id, progress) => {
+      await api(`/documents/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ progress }),
-      }).catch(() => {});
-    }
-  }
+        keepalive: true,
+      });
+      setDocs(items => items.map(doc => doc.id === id ? { ...doc, progress } : doc));
+      setSelected(doc => doc?.id === id ? { ...doc, progress } : doc);
+    },
+  });
   return (
     <div className={dark ? "app dark" : "app"} style={panes.style}>
       {projectOpen && (
@@ -827,6 +824,7 @@ export function App() {
                   <b>{selected.title}</b>
                 </div>
                 <div className="reader-actions">
+                  {pagination.total > 0 && <PageNavigation {...pagination} />}
                   <button
                     className="panel-toggle"
                     aria-expanded={rightOpen}
@@ -881,7 +879,6 @@ export function App() {
                   data-document-id={selected.id}
                   ref={reader}
                   onMouseUp={capture}
-                  onScroll={saveProgress}
                 >
                   <div className="paper-meta">
                     <div className="eyebrow">

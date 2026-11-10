@@ -250,3 +250,10 @@ main { min-width: 0; }
 .trash-error { color:var(--error); font-size:13px; }
 .undo-notice { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:90; display:flex; align-items:center; gap:12px; max-width:calc(100vw - 24px); padding:10px 14px; border:1px solid var(--border); border-radius:12px; box-shadow:0 4px 24px #0002; background:var(--bg); color:var(--ink); font-size:13px; }
 .undo-notice button { background:transparent; border:0; border-radius:4px; color:inherit; padding:4px; white-space:nowrap; }
+
+.page-navigation { display:flex; align-items:center; gap:3px; flex-shrink:0; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.page-navigation input { width:34px; min-width:0; padding:5px 2px; text-align:center; border:1px solid transparent; border-radius:5px; background:transparent; color:var(--ink); font:inherit; }
+.page-navigation input:hover { border-color:var(--border); }
+.page-navigation input:focus { outline:1px solid var(--ink); border-color:transparent; }
+.reader-actions .page-navigation button { padding:5px; min-width:22px; font-size:17px; }
+@media (max-width:600px) { .reader-actions { flex-wrap:wrap; justify-content:flex-start; } }

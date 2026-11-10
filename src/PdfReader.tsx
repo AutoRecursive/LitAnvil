@@ -101,7 +101,7 @@ export const PdfReader = React.memo(
           });
           container.replaceChildren(...views.map((view) => view.element));
           setLoaded({ src, pages: views });
-          setStatus(`共 ${pdf.numPages} 页`);
+          setStatus("");
         } catch (error) {
           if (!cancelled) {
             setStatus("PDF 加载失败");
@@ -225,7 +225,7 @@ export const PdfReader = React.memo(
         className="pdf-reader"
         data-source={loaded?.src === src ? src : undefined}
       >
-        <div className="pdf-status">{status}</div>
+        {status && <div className="pdf-status" role="status">{status}</div>}
         <div className="pdf-pages" ref={host} onMouseUp={onSelection} />
       </div>
     );
