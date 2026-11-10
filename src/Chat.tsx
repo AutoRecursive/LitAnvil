@@ -3,6 +3,8 @@ import { arxivLink } from "../shared/import-url";
 import { subscribeLive } from "./live";
 import React, { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
+import { ResizeHandle } from "./ResizeHandle";
+import { paneBounds, paneDefaults } from "../shared/reader-layout";
 const API = "http://localhost:8787/api";
 import type { AgentSnapshot, AgentItem, ProviderInfo } from "../shared/agent";
 export function Chat({
@@ -10,12 +12,28 @@ export function Chat({
   quote,
   onImport,
   children,
+  composerHeight = paneDefaults.composerHeight,
+  onComposerResize,
 }: {
   documentId?: string;
   quote?: string;
   onImport: (url: string) => void;
   children?: React.ReactNode;
+  composerHeight?: number;
+  onComposerResize?: (height: number) => void;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  const [composerLimit, setComposerLimit] = useState(paneBounds.composerHeight[1]);
+  useEffect(() => {
+    const element = panel.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      setComposerLimit(Math.max(paneBounds.composerHeight[0], Math.min(paneBounds.composerHeight[1], element.clientHeight - 180)));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const inputHeight = Math.min(composerHeight, composerLimit);
   const [state, setState] = useState<AgentSnapshot>({
     protocolVersion: 1,
     provider: "codex",
@@ -89,7 +107,7 @@ export function Chat({
   }
   const providerLabel = state.provider === "claude" ? "Claude" : "Codex";
   return (
-    <section className="chat-session">
+    <section className="chat-session" ref={panel}>
       <div className="session-toolbar">
         <select
           className="provider-select"
@@ -151,9 +169,21 @@ export function Chat({
         {unsent.map((text,index)=><div key={index}><pre>{text}</pre><button onClick={()=>chatDrafts.restore(index)}>恢复到输入框</button></div>)}
       </details>}
       <div className="composer">
+        {onComposerResize && <ResizeHandle
+          className="composer-resize"
+          orientation="horizontal"
+          label="输入区高度"
+          value={inputHeight}
+          min={paneBounds.composerHeight[0]}
+          max={composerLimit}
+          defaultValue={Math.min(paneDefaults.composerHeight, composerLimit)}
+          direction={-1}
+          onChange={onComposerResize}
+        />}
         {quote && <blockquote className="chat-quote">{quote}</blockquote>}
         {children}
         <textarea
+          style={onComposerResize ? {height:inputHeight} : undefined}
           aria-label="消息"
           placeholder={
             documentId ? "询问这篇论文…" : "问点什么，或粘贴 arXiv 链接"

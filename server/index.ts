@@ -237,9 +237,25 @@ app.use(
 const server = app.listen(port, "127.0.0.1", () =>
   console.log(`LitAnvil API listening on http://localhost:${port}`),
 );
+let shuttingDown = false;
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   process.on(signal, () => {
-    session.close();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("[Shutdown] draining Agent session", {signal});
     server.close();
-    setTimeout(() => process.exit(0), 500).unref();
+    server.closeAllConnections();
+    const deadline = setTimeout(() => {
+      console.error("[Shutdown] session flush timed out; inspect Agent persistence logs");
+      process.exit(1);
+    }, 10000);
+    void session.shutdown().then(() => {
+      clearTimeout(deadline);
+      console.log("[Shutdown] Agent session saved");
+      process.exit(0);
+    }, error => {
+      clearTimeout(deadline);
+      console.error("[Shutdown] Agent session could not be saved", error);
+      process.exit(1);
+    });
   });

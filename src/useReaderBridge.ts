@@ -90,16 +90,19 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
         console.debug("[Reader bridge] state sync failed", error);
       }
     }
-    async function waitFor(check: () => boolean) {
+    async function waitFor(check: () => boolean, signal?: AbortSignal) {
+      signal?.throwIfAborted();
       const start = Date.now();
       while (!disposed && !check()) {
+        signal?.throwIfAborted();
         if (Date.now() - start > 10000)
           throw new Error("文档尚未加载完成，请重试");
         await new Promise((resolve) => setTimeout(resolve, 40));
       }
+      signal?.throwIfAborted();
       if (disposed) throw new Error("阅读界面已关闭");
     }
-    async function waitReady(documentId: string, page = 1) {
+    async function waitReady(documentId: string, page = 1, signal?: AbortSignal) {
       await waitFor(() => {
         const { selected, reader } = current.current;
         if (
@@ -122,9 +125,9 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
             `.pdf-page[data-page="${page}"]`,
           )?.dataset.ready === "true"
         );
-      });
+      }, signal);
     }
-    async function waitForVisualLayout() {
+    async function waitForVisualLayout(signal?: AbortSignal) {
       let signature="", stableSince=Date.now();
       await waitFor(()=>{
         const state=current.current,reader=state.reader.current;
@@ -133,33 +136,40 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
         if(next!==signature){signature=next;stableSince=Date.now();}
         const ready=!state.selected?.fileUrl || page?.dataset.ready==="true";
         return ready && Date.now()-stableSince>=160;
-      });
+      }, signal);
     }
-    const unsubscribe = subscribeLive("reader", async command => {
-      if (command.clientId !== clientId) return;
+    const controllers = new Map<string, AbortController>();
+    let commandTail = Promise.resolve();
+    async function execute(command: any, controller: AbortController) {
+      const signal = controller.signal;
+      const ready = (id: string, page = 1) => waitReady(id, page, signal);
+      const wait = (check: () => boolean) => waitFor(check, signal);
+      const settle = () => waitForVisualLayout(signal);
       let result: Record<string, any>;
       let details: Record<string, unknown> = {};
       try {
+        signal.throwIfAborted();
         const state = current.current;
         switch (command.action) {
           case "get_state":
             break;
           case "open_document": {
             const doc = state.docs.find((doc) => doc.id === command.documentId)
-              || await api(`/documents/${encodeURIComponent(String(command.documentId || ""))}`) as T;
+              || await api(`/documents/${encodeURIComponent(String(command.documentId || ""))}`, {signal}) as T;
+            signal.throwIfAborted();
             state.openDocument(doc);
-            await waitReady(doc.id);
+            await ready(doc.id);
             break;
           }
           case "close_document":
             state.closeDocument();
-            await waitFor(() => current.current.selected === null);
+            await wait(() => current.current.selected === null);
             break;
           case "go_to_page": {
             if (!state.selected) throw new Error("请先打开文档");
             if (!Number.isInteger(command.page) || command.page < 1)
               throw new Error("无效页码");
-            await waitReady(state.selected.id, command.page);
+            await ready(state.selected.id, command.page);
             const page = state.reader.current?.querySelector<HTMLElement>(
               `.pdf-page[data-page="${command.page}"]`,
             );
@@ -171,40 +181,40 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           case "reset_layout": {
             const patch=command.action==="reset_layout"?paneDefaults:validateLayoutPatch(command.layout);
             state.setPaneLayout(patch);
-            await waitFor(()=>Object.entries(patch).every(([key,value])=>current.current.paneLayout[key as keyof PaneLayout]===value));
-            await waitForVisualLayout();
+            await wait(()=>Object.entries(patch).every(([key,value])=>current.current.paneLayout[key as keyof PaneLayout]===value));
+            await settle();
             break;
           }
           case "download_annotations":
             if (!state.selected) throw new Error("请先打开文档");
             if(command.format!=="json" && command.format!=="markdown")throw new Error("导出格式仅支持 json 或 markdown");
-            details={download:await downloadAnnotations(state.selected,command.format)};
+            details={download:await downloadAnnotations(state.selected,command.format,signal)};
             break;
           case "set_zoom": {
             const zoom = Number(command.zoom);
             if (!Number.isFinite(zoom) || zoom < 0.75 || zoom > 1.8)
               throw new Error("缩放范围为 75%–180%");
             state.setZoom(zoom);
-            await waitFor(() => current.current.zoom === zoom);
-            await waitForVisualLayout();
+            await wait(() => current.current.zoom === zoom);
+            await settle();
             break;
           }
           case "toggle_left":
             state.setLeftOpen(command.open ?? !state.leftOpen);
-            await waitFor(
+            await wait(
               () =>
                 current.current.leftOpen === (command.open ?? !state.leftOpen),
             );
-            await waitForVisualLayout();
+            await settle();
             break;
           case "toggle_right":
             state.setRightOpen(command.open ?? !state.rightOpen);
-            await waitFor(
+            await wait(
               () =>
                 current.current.rightOpen ===
                 (command.open ?? !state.rightOpen),
             );
-            await waitForVisualLayout();
+            await settle();
             break;
           case "clear_preview":
             state.reader.current
@@ -214,12 +224,12 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           case "preview_text": {
             if (command.page !== undefined && (!Number.isInteger(command.page) || command.page < 1)) throw new Error("无效页码");
             if (!state.selected) throw new Error("请先打开文档");
-            await waitReady(state.selected.id, command.page || 1);
+            await ready(state.selected.id, command.page || 1);
             const needle = String(command.text || "").trim();
             if (!needle) throw new Error("缺少定位文本");
             if (!command.page) {
               const lastPage = state.reader.current?.querySelectorAll(".pdf-page").length || 1;
-              await waitReady(state.selected.id, lastPage);
+              await ready(state.selected.id, lastPage);
             }
             const matched = findPdfText(state.reader.current!, needle, command.page);
             matched.sort((a, b) =>
@@ -258,9 +268,23 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           console.warn("[Reader bridge] acknowledgement failed", error);
         }
       }
+    }
+    const cancelAll = () => { for (const controller of controllers.values()) controller.abort(new Error("阅读界面连接已中断")); };
+    const unsubscribe = subscribeLive("reader", command => {
+      if (command.clientId !== clientId) return;
+      if (command.kind === "cancel") { controllers.get(command.commandId)?.abort(new Error("界面操作已过期")); return; }
+      if (!command.id || controllers.has(command.id)) return;
+      const controller = new AbortController();
+      controllers.set(command.id, controller);
+      const expires = typeof command.expiresAt === "number" ? command.expiresAt : Date.now() + 12000;
+      if (expires <= Date.now()) controller.abort(new Error("界面操作已过期"));
+      const timer = setTimeout(() => controller.abort(new Error("界面操作已过期")), Math.max(0, expires - Date.now()));
+      commandTail = commandTail.catch(() => {}).then(() => execute(command, controller)).finally(() => {
+        clearTimeout(timer); controllers.delete(command.id);
+      });
     }, {
-      onOpen: () => { connected = true; lastState = ""; void publish(true); },
-      onError: () => { connected = false; },
+      onOpen: () => { cancelAll(); connected = true; lastState = ""; void publish(true); },
+      onError: () => { connected = false; cancelAll(); },
     });
     const activity = () => {
       clearTimeout(activityTimer);
@@ -273,6 +297,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
     const interval = setInterval(() => void publish(), 500);
     return () => {
       disposed = true;
+      cancelAll();
       clearInterval(interval);
       clearTimeout(activityTimer);
       unsubscribe();

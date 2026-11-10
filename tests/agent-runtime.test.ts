@@ -257,3 +257,86 @@ it('switches project configuration and authoritative session together while reje
   await runtime.stop();
  }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
 });
+
+it('recovers a truncated journal and corrupt snapshot, then continues the same native conversation',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-runtime-recovery-'));
+ const create=()=>new AgentRuntime(root,async()=>root,path.join(root,'data'),factory);
+ let runtime=create();const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ try{
+  await runtime.connect();await runtime.send('keep my history');await runtime.stop();await runtime.flush();
+  const previous=runtime.state.revision;runtime.close();await runtime.flush();
+  const scope=(await fs.readdir(path.join(root,'data','agents')))[0];
+  const directory=path.join(root,'data','agents',scope,'codex');
+  await fs.appendFile(path.join(directory,'events.ndjson'),'{"revision":');
+  await fs.writeFile(path.join(directory,'snapshot.json'),'{"items":');
+  runtime=create();await runtime.connect();
+  expect(runtime.state.items[0]).toMatchObject({text:'keep my history'});
+  expect(runtime.state.revision).toBeGreaterThan(previous);
+  await runtime.send('new message after recovery');await runtime.stop();await runtime.flush();
+  const history=await runtime.history();
+  expect(history.at(-1)?.revision).toBe(runtime.state.revision);
+  expect(runtime.state.items.map(item=>'text' in item?item.text:'')).toEqual(['keep my history','new message after recovery']);
+  expect((await fs.readdir(directory)).some(name=>name.includes('.incomplete-'))).toBe(true);
+ }finally{await runtime.shutdown();warning.mockRestore();await fs.rm(root,{recursive:true,force:true})}
+});
+it('waits for interrupted adapters to finish publishing and persists their final snapshot before shutdown resolves',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-runtime-shutdown-'));
+ let release!:()=>void;
+ class DrainingAdapter extends FakeAdapter{
+  private ending?:Promise<void>;
+  close(){this.ending ||= new Promise<void>(resolve=>{release=resolve}).then(()=>{
+   this.state.items.push({id:'final',type:'message',role:'assistant',text:'last streamed answer'});
+   this.state.status='idle';this.publish();
+  })}
+  async drain(){await this.ending}
+ }
+ const runtime=new AgentRuntime(root,async()=>root,path.join(root,'data'),(provider,options)=>new DrainingAdapter(provider,options.storageDir));
+ try{
+  await runtime.connect();await runtime.flush();let completed=false;
+  const ending=runtime.shutdown().then(()=>{completed=true});
+  await new Promise(resolve=>setTimeout(resolve,0));expect(completed).toBe(false);
+  release();await ending;
+  const scope=(await fs.readdir(path.join(root,'data','agents')))[0];
+  const snapshot=JSON.parse(await fs.readFile(path.join(root,'data','agents',scope,'codex','snapshot.json'),'utf8'));
+  expect(snapshot.items.at(-1)).toMatchObject({text:'last streamed answer'});
+  await expect(runtime.connect()).rejects.toThrow('已停止');
+ }finally{release?.();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});
+it('does not launch an adapter when shutdown happens during workspace lookup',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-close-connect-'));let release!:(value:string)=>void;
+ const make=vi.fn(factory);
+ const runtime=new AgentRuntime(root,()=>new Promise(resolve=>{release=resolve}),path.join(root,'data'),make);
+ try{
+  const connecting=runtime.connect();const rejected=expect(connecting).rejects.toThrow('已停止');
+  const ending=runtime.shutdown();release(root);await rejected;await ending;expect(make).not.toHaveBeenCalled();
+ }finally{runtime.close();await fs.rm(root,{recursive:true,force:true})}
+});
+it('journals removals when native history differs from the recovered snapshot on first connect',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-native-reconcile-'));
+ const create=()=>new AgentRuntime(root,async()=>root,path.join(root,'data'),factory);
+ let runtime=create();
+ try{
+  await runtime.connect();await runtime.send('old native item');await runtime.stop();await runtime.shutdown();
+  const scope=(await fs.readdir(path.join(root,'data','agents')))[0];
+  const directory=path.join(root,'data','agents',scope,'codex');
+  const native=JSON.parse(await fs.readFile(path.join(directory,'fake.json'),'utf8'));
+  native.items=[];await fs.writeFile(path.join(directory,'fake.json'),JSON.stringify(native));
+  runtime=create();await runtime.connect();await runtime.shutdown();
+  expect(runtime.state.items).toEqual([]);
+  const {recoverSnapshot}=await import('../server/agent/journal');
+  expect((await recoverSnapshot(directory,'codex',root))?.items).toEqual([]);
+ }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});
+it('starts a full journal checkpoint after restart even when an older journal is missing',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-journal-checkpoint-'));
+ const create=()=>new AgentRuntime(root,async()=>root,path.join(root,'data'),factory);let runtime=create();
+ try{
+  await runtime.connect();await runtime.send('retained without original journal');await runtime.stop();await runtime.shutdown();
+  const scope=(await fs.readdir(path.join(root,'data','agents')))[0];const directory=path.join(root,'data','agents',scope,'codex');
+  await fs.unlink(path.join(directory,'events.ndjson'));
+  runtime=create();await runtime.connect();await runtime.shutdown();
+  await fs.unlink(path.join(directory,'snapshot.json'));
+  const {recoverSnapshot}=await import('../server/agent/journal');
+  expect((await recoverSnapshot(directory,'codex',root))?.items[0]).toMatchObject({text:'retained without original journal'});
+ }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});

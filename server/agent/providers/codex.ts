@@ -109,4 +109,7 @@ export class CodexAdapter extends AgentAdapter {
   close() {
     this.native.close();
   }
+  drain() {
+    return this.native.drain();
+  }
 }

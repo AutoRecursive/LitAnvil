@@ -5,6 +5,7 @@ import path from "node:path";
 import { AgentAdapter, executable, type ProviderOptions } from "./provider.js";
 import { CodexAdapter } from "./providers/codex.js";
 import { ClaudeAdapter } from "./providers/claude.js";
+import { readJournal, recoverSnapshot } from "./journal.js";
 import type {
   AgentSnapshot,
   AgentJournalEvent,
@@ -114,14 +115,8 @@ export class AgentRuntime extends EventEmitter {
       workspace,
       storageDir: directory,
     });
-    let cached: AgentSnapshot | undefined;
-    try {
-      cached = JSON.parse(
-        await fs.readFile(path.join(directory, "snapshot.json"), "utf8"),
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    const cached = await recoverSnapshot(directory, provider, workspace);
+    if (this.closed) { adapter.close(); throw new Error("Agent 服务已停止"); }
     const snapshot: AgentSnapshot = cached || {
       ...adapter.state,
       protocolVersion: 1,
@@ -137,7 +132,7 @@ export class AgentRuntime extends EventEmitter {
       directory,
       snapshot,
       signature: "",
-      items: new Map(),
+      items: new Map(snapshot.items.map(item => [item.id, JSON.stringify(item)])),
       tail: Promise.resolve(),
     };
     this.entries.set(key, entry);
@@ -160,9 +155,11 @@ export class AgentRuntime extends EventEmitter {
       if (entry === this.active) this.state = entry.snapshot;
       return;
     }
+    const firstProjection = !entry.signature;
     entry.signature = signature;
     const sessionId = `${entry.provider}:${state.nativeSessionId || "pending"}`;
     const reset =
+      firstProjection ||
       sessionId !== entry.snapshot.sessionId ||
       [...entry.items.keys()].some(
         (id) => !state.items.some((item) => item.id === id),
@@ -227,6 +224,7 @@ export class AgentRuntime extends EventEmitter {
   }
   private async prepare() {
     const workspace = await this.workspace();
+    if (this.closed) throw new Error("Agent 服务已停止");
     if (this.active?.workspace === workspace) {
       await this.active.adapter.connect();
       return;
@@ -339,22 +337,9 @@ export class AgentRuntime extends EventEmitter {
   }
   async history(after = 0) {
     await this.connect();
-    await this.active!.tail;
-    try {
-      return (
-        await fs.readFile(
-          path.join(this.active!.directory, "events.ndjson"),
-          "utf8",
-        )
-      )
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as AgentJournalEvent)
-        .filter((event) => event.revision > after);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
+    const entry = this.active!;
+    await entry.tail;
+    return (await readJournal(entry.directory, entry.provider)).filter(event => event.revision > after);
   }
   async flush() {
     await Promise.all([...this.entries.values()].map((entry) => entry.tail));
@@ -363,5 +348,11 @@ export class AgentRuntime extends EventEmitter {
   close() {
     this.closed = true;
     for (const entry of this.entries.values()) entry.adapter.close();
+  }
+  async shutdown() {
+    this.close();
+    await this.preparing?.catch(() => {});
+    await Promise.all([...this.entries.values()].map(entry => entry.adapter.drain()));
+    await this.flush();
   }
 }

@@ -107,3 +107,32 @@ it('restores the saved document when the initial library request fails and the l
  expect(container.querySelector('[role="alert"]')).toBeNull();
  warning.mockRestore();
 });
+it('does not steal navigation when an earlier link import completes after the user closes the reader',async()=>{
+ sessionStorage.setItem('litanvil-open-document','A');let complete!:(value:unknown)=>void;
+ request.mockImplementation(async(url:string,init?:RequestInit)=>url.endsWith('/import/url')?new Promise(resolve=>{complete=resolve}):result(url.endsWith('/documents')?documents:url.endsWith('/project')?{directory:'/notes'}:[]));
+ await act(async()=>root.render(<App/>));
+ const input=container.querySelector<HTMLInputElement>('[aria-label="导入链接"]')!;const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
+ await act(async()=>{set.call(input,'https://example.test/new-paper');input.dispatchEvent(new Event('input',{bubbles:true}))});
+ await act(async()=>container.querySelector<HTMLButtonElement>('button[aria-label="导入链接"]')!.click());
+ await act(async()=>container.querySelector<HTMLButtonElement>('.back')!.click());
+ await act(async()=>complete(result({id:'new',title:'Imported paper',source:'new',sourceType:'text',content:'body',progress:0})));
+ expect(container.querySelector('.paper')).toBeNull();expect(container.querySelectorAll('.library-open')).toHaveLength(3);expect(sessionStorage.getItem('litanvil-open-document')).toBeNull();
+});
+it('cancels a delayed reader command before allowing the next command and never runs an expired download',async()=>{
+ sessionStorage.setItem('litanvil-open-document','A');let aborted=false;
+ request.mockImplementation(async(url:string,init?:RequestInit)=>{
+  if(url.endsWith('/documents/Late'))return new Promise((_resolve,reject)=>{init?.signal?.addEventListener('abort',()=>{aborted=true;reject(init.signal!.reason)},{once:true})});
+  return result(url.endsWith('/documents')?documents:url.endsWith('/project')?{directory:'/notes'}:[]);
+ });
+ await act(async()=>root.render(<App/>));
+ const [url,stream]=[...streams.entries()][0];const clientId=new URL(url).searchParams.get('clientId');
+ const send=(data:Record<string,unknown>)=>stream.onmessage({data:JSON.stringify({type:'reader',data:{clientId,...data}})});
+ await act(async()=>send({kind:'command',id:'first',action:'open_document',documentId:'Late',expiresAt:Date.now()+10000}));
+ await act(async()=>{send({kind:'command',id:'second',action:'close_document',expiresAt:Date.now()+10000});send({kind:'cancel',commandId:'first'})});
+ await act(async()=>{await new Promise(resolve=>setTimeout(resolve,60))});
+ expect(aborted).toBe(true);expect(container.querySelector('.paper')).toBeNull();
+ const acknowledgements=request.mock.calls.filter(([url])=>url.endsWith('/ui/ack')).map(([,init])=>JSON.parse(init.body));
+ expect(acknowledgements.map(value=>value.id)).toEqual(['first','second']);expect(acknowledgements[0].result.ok).toBe(false);expect(acknowledgements[1].result.state.documentId).toBeNull();
+ await act(async()=>send({kind:'command',id:'expired',action:'download_annotations',format:'json',expiresAt:Date.now()-1}));
+ expect(request.mock.calls.some(([url])=>url.includes('/export.'))).toBe(false);
+});

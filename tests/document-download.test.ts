@@ -9,7 +9,7 @@ it('downloads authoritative response bytes using the server filename and keeps t
  const request=vi.fn(async()=>({ok:true,headers:new Headers({'content-disposition':"attachment; filename*=UTF-8''Fresh%20title-annotations.json"}),blob:async()=>new Blob(['{"annotations":[{"note":"new server value"}]}'],{type:'application/json'})}));vi.stubGlobal('fetch',request);
  const clicked=vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(function(this:HTMLAnchorElement){expect(this.isConnected).toBe(true);expect(this.download).toBe('Fresh title-annotations.json')});
  const result=await downloadAnnotations({id:'a/b',title:'Stale title'},'json');
- expect(request).toHaveBeenCalledWith('http://localhost:8787/api/documents/a%2Fb/export.json');expect(clicked).toHaveBeenCalledTimes(1);expect(create).toHaveBeenCalledTimes(1);expect(revoke).not.toHaveBeenCalled();expect(result.requested).toBe(true);expect(result.bytes).toBeGreaterThan(0);
+ expect(request).toHaveBeenCalledWith('http://localhost:8787/api/documents/a%2Fb/export.json',{signal:undefined});expect(clicked).toHaveBeenCalledTimes(1);expect(create).toHaveBeenCalledTimes(1);expect(revoke).not.toHaveBeenCalled();expect(result.requested).toBe(true);expect(result.bytes).toBeGreaterThan(0);
  vi.advanceTimersByTime(1000);expect(revoke).toHaveBeenCalledWith('blob:fixture');expect(document.querySelector('a')).toBeNull();
 });
 it('does not request a fake download on failure or unsupported format',async()=>{

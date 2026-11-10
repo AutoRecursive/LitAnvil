@@ -22,6 +22,7 @@ export class CodexSession extends EventEmitter {
   switching = false;
   reconnectAttempts = 0;
   startingTurn?: Promise<void>;
+  private writes: Promise<void> = Promise.resolve();
   reconnectTimer?: ReturnType<typeof setTimeout>;
   state: {
     threadId: string | null;
@@ -117,6 +118,7 @@ export class CodexSession extends EventEmitter {
       await fs.mkdir(this.storageDir, { recursive: true });
       if (this.closing) throw new Error("Codex 服务已停止");
       const isolated = this.transport ? undefined : await prepareCodexHome(workspace, this.storageDir);
+      if (this.closing) throw new Error("Codex 服务已停止");
       const child =
         this.transport?.() ||
         spawn(
@@ -223,8 +225,12 @@ export class CodexSession extends EventEmitter {
   }
   async saveThread(thread: {id:string;path?:string|null}) {
     const temporary = path.join(this.storageDir,"session.json.tmp");
-    await fs.writeFile(temporary, JSON.stringify({threadId:thread.id,...(thread.path ? {rolloutPath:thread.path} : {})}), {mode:0o600});
-    await fs.rename(temporary,path.join(this.storageDir,"session.json"));
+    const data = JSON.stringify({threadId:thread.id,...(thread.path ? {rolloutPath:thread.path} : {})});
+    this.writes = this.writes.catch(() => {}).then(async () => {
+      await fs.writeFile(temporary, data, {mode:0o600});
+      await fs.rename(temporary,path.join(this.storageDir,"session.json"));
+    });
+    await this.writes;
   }
   async newThread() {
     const r = await this.request("thread/start", {
@@ -385,5 +391,8 @@ export class CodexSession extends EventEmitter {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.disconnected("服务已停止");
+  }
+  async drain() {
+    await this.writes;
   }
 }

@@ -10,6 +10,8 @@ export abstract class AgentAdapter extends EventEmitter {
   abstract stop(): Promise<void>;
   abstract clear(): Promise<void>;
   abstract close(): void;
+  /** Wait for work already interrupted by close(), including final transcript writes. */
+  async drain(): Promise<void> {}
   protected publish() {
     this.emit("snapshot", this.state);
   }

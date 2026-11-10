@@ -232,6 +232,7 @@ export class ClaudeAdapter extends AgentAdapter {
     }
   }
   connect() {
+    if (this.closed) return Promise.reject(new Error("Claude 服务已停止"));
     return (this.ready ||= (async () => {
       await fs.mkdir(this.options.storageDir, { recursive: true });
       await fs.mkdir(this.options.workspace, { recursive: true });
@@ -250,6 +251,7 @@ export class ClaudeAdapter extends AgentAdapter {
       this.state.nativeSessionId ||= randomUUID();
       await this.save();
       await this.refresh();
+      if (this.closed) throw new Error("Claude 服务已停止");
       this.publish();
       this.timer = setInterval(
         () =>
@@ -274,6 +276,7 @@ export class ClaudeAdapter extends AgentAdapter {
     const sdk = await this.sdk();
     const binary = await executable("claude");
     const auth = await claudeAuthentication(this.options.workspace);
+    if (this.closed) throw new Error("Claude 服务已停止");
     // Re-check after asynchronous SDK loading so simultaneous sends cannot start two turns.
     if (this.run) throw new Error("当前回答尚未结束");
     const id = this.state.nativeSessionId!;
@@ -419,5 +422,10 @@ export class ClaudeAdapter extends AgentAdapter {
     this.stopped = true;
     clearInterval(this.timer);
     this.controller?.abort();
+  }
+  async drain() {
+    await this.ready?.catch(() => {});
+    await this.run;
+    await this.writes;
   }
 }

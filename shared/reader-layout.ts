@@ -1,7 +1,7 @@
-export const paneDefaults = {leftWidth:240,rightWidth:360,documentShare:40,readerShare:60,headerHeight:64,toolbarHeight:56};
+export const paneDefaults = {leftWidth:240,rightWidth:360,documentShare:40,readerShare:60,headerHeight:64,toolbarHeight:56,composerHeight:64};
 export type PaneLayout = typeof paneDefaults;
 export const paneBounds: Record<keyof PaneLayout,[number,number]> = {
-  leftWidth:[180,500],rightWidth:[260,700],documentShare:[15,80],readerShare:[25,80],headerHeight:[48,96],toolbarHeight:[56,140],
+  leftWidth:[180,500],rightWidth:[260,700],documentShare:[15,80],readerShare:[25,80],headerHeight:[48,96],toolbarHeight:[56,140],composerHeight:[44,240],
 };
 export function validateLayoutPatch(input: unknown): Partial<PaneLayout> {
   if (!input || typeof input!=="object" || Array.isArray(input) || !Object.keys(input).length) throw new Error("缺少布局参数");

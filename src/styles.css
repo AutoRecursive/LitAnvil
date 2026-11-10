@@ -166,7 +166,7 @@ main { min-width: 0; }
 .session-tool pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 11px; }
 .session-progress { color: var(--muted); font-size: 12px; padding: 8px; }
 .session-error { background: var(--error-bg); color: var(--error); padding: 10px; border-radius: 8px; font-size: 12px; max-height: 100px; overflow: auto; }
-.composer { flex-shrink: 0; padding: 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); box-shadow: 0 4px 20px #00000008; }
+.composer { position: relative; flex-shrink: 0; padding: 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); box-shadow: 0 4px 20px #00000008; }
 .composer textarea { display: block; width: 100%; height: 64px; min-height: 44px; max-height: 160px; padding: 6px 2px; border: 0; outline: 0; resize: vertical; background: transparent; color: inherit; font-size: 14px; line-height: 1.5; }
 .composer:focus-within { border-color: var(--muted); }
 .session-send { display: flex; justify-content: flex-end; }
@@ -228,6 +228,12 @@ main { min-width: 0; }
 .resize-handle.horizontal::after { height: 2px; top: 3px; left: 0; right: 0; }
 .resize-handle:hover::after, .resize-handle:focus-visible::after, .resize-handle:active::after { background: #22b8cf; }
 .resize-handle:focus-visible { outline-offset: -1px; }
+.resize-handle::before { content: ''; position: absolute; pointer-events: none; border-radius: 4px; background: var(--muted); opacity: .3; }
+.resize-handle.horizontal::before { width: 28px; height: 2px; left: calc(50% - 14px); top: 3px; }
+.resize-handle.vertical::before { height: 28px; width: 2px; top: calc(50% - 14px); left: 3px; }
+.resize-handle:hover::before, .resize-handle:focus-visible::before { opacity: .8; }
+.composer-resize { position: absolute; top: -5px; left: 16px; right: 16px; height: 10px; }
+.composer:has(.composer-resize) > textarea { resize: none; min-height: 44px; max-height: 240px; }
 .sidebar-width-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 8px; z-index: 55; }
 .header-resize, .toolbar-resize { position: absolute; bottom: -4px; left: 0; right: 0; height: 8px; z-index: 6; }
 .reader-agent-resize { background: var(--soft); }

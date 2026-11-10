@@ -58,6 +58,8 @@ export function App() {
   const [url, setUrl] = useState("");
   const [query, setQuery] = useState("");
   const [importing, setImporting] = useState(false);
+  const navigationIntent = useRef(0);
+  const importCount = useRef(0);
   const [dark, setDark] = useState(
     () => localStorage.getItem("litanvil-theme") === "dark",
   );
@@ -174,6 +176,7 @@ export function App() {
   );
   async function importUrl(inputUrl = url) {
     if (!inputUrl) return;
+    const intent = ++navigationIntent.current;
     const item = {
       id: crypto.randomUUID(),
       url: inputUrl,
@@ -184,6 +187,7 @@ export function App() {
     setQueue((q) => [item, ...q]);
     setError("");
     setUrl("");
+    importCount.current++;
     setImporting(true);
     setQueue((q) =>
       q.map((x) =>
@@ -204,7 +208,7 @@ export function App() {
         body: JSON.stringify({ url: item.url }),
       });
       setDocs((x) => [d, ...x.filter((item) => item.id !== d.id)]);
-      openDocument(d);
+      if (intent === navigationIntent.current) openDocument(d);
       setQueue((q) =>
         q.map((x) =>
           x.id === item.id
@@ -223,7 +227,8 @@ export function App() {
         ),
       );
     } finally {
-      setImporting(false);
+      importCount.current = Math.max(0, importCount.current - 1);
+      setImporting(importCount.current > 0);
     }
   }
   async function refreshLibrary() {
@@ -263,6 +268,8 @@ export function App() {
   async function importFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    const intent = ++navigationIntent.current;
+    importCount.current++;
     setImporting(true);
     setError("");
     try {
@@ -270,11 +277,12 @@ export function App() {
       f.append("file", file);
       const d = await api("/import/file", { method: "POST", body: f });
       setDocs((x) => [d, ...x.filter((item) => item.id !== d.id)]);
-      openDocument(d);
+      if (intent === navigationIntent.current) openDocument(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : "上传失败");
     } finally {
-      setImporting(false);
+      importCount.current = Math.max(0, importCount.current - 1);
+      setImporting(importCount.current > 0);
       e.target.value = "";
     }
   }
@@ -319,12 +327,14 @@ export function App() {
     }
   }
   function openDocument(document: Doc) {
+    navigationIntent.current++;
     setSelected(document);
     if (document.sourceType === "arxiv" && !document.fileUrl && !importing)
       void importUrl(document.source);
     if (window.innerWidth <= 900) setLeftOpen(false);
   }
   function closeDocument() {
+    navigationIntent.current++;
     sessionStorage.removeItem("litanvil-open-document");
     setSelected(null);
   }
@@ -714,7 +724,7 @@ export function App() {
                   <i>开始共读</i>
                 </h1>
                 <div className="home-chat-panel">
-                  <Chat onImport={importUrl} />
+                  <Chat onImport={importUrl} composerHeight={panes.layout.composerHeight} onComposerResize={(height)=>panes.set("composerHeight",height)} />
                 </div>
                 <div className="home-import-state" aria-live="polite">
                   {importing && <span>正在导入文档…</span>}
@@ -966,6 +976,8 @@ export function App() {
                 )}
                 <section className={`ai-panel ${rightOpen ? "" : "collapsed"}`}>
                   <Chat
+                    composerHeight={panes.layout.composerHeight}
+                    onComposerResize={(height)=>panes.set("composerHeight",height)}
                     documentId={selected.id}
                     quote={selection}
                     onImport={importUrl}
