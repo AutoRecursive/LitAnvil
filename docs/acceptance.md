@@ -14,8 +14,8 @@
 - Real browser stop/clear/reconnect and multiple-tab synchronization (transport tests cover stop/clear/resume; real restart/resume already verified).
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - Global plugins/MCP currently inherited; restrict to intended project config without changing global config.
-- Further visual selection checks at different zooms, multiline agent preview, (manual page navigation verified below).
-- Finish multiline PDF text matching/selection checks, remaining layout/export controls and real stop/clear/reconnect checks. Document/annotation MCP operations and cross-tab updates are verified below.
+- Further manual text-selection checks beyond the existing PDF fixtures; multiline agent preview and manual page navigation are verified below.
+- Finish remaining manual PDF selection cases, layout/export controls and real stop/clear/reconnect checks. Document/annotation MCP operations and cross-tab updates are verified below.
 - Final runtime launch audit, project settings isolation and completion of the remaining interaction checks.
 
 ## Additional evidence
@@ -90,3 +90,11 @@
 - Missing HTML doctype/meta viewport/title fixed; real browser now reports CSS1Compat and formula rendering no longer runs in quirks mode.
 - Temporary fixture DB/uploads/notes removed after restoring the real server. Real library still has both original documents, the Causal Forcing++ annotation's 135 rectangles, all 18 PDF page slots and the original Codex history. Native account history created during integration checks is outside the temporary library.
 - 60 tests pass, including MCP CRUD/recovery/validation, live server multiplexing, singleton client transport/cache/non-replayed commands, cross-tab UI updates and stale-response isolation. API tests inject a deterministic transport and wait for process exit during cleanup; no model calls are used by automated tests. Production build passes with the existing bundle-size advisory.
+
+## Multiline PDF matching and exact text anchors (2026-11-10)
+- Agent preview searches across original PDF text spans and lines, normalizing whitespace, ligatures and composed/decomposed accents. Printed line-break hyphenation is removed while same-line compound hyphens remain significant. Repeated occurrences are distinct matches; searches do not stitch unrelated pages together.
+- Preview ranges map back to original text-node offsets and produce glyph-range rectangles, rather than whole-span or paragraph boxes. Normalized rectangles remain available for compatibility. Page-scoped matching waits for the target page; whole-document matching waits for the final rendered page. Invalid page numbers fail immediately. A failed search retains previous temporary previews, and append=true can mark a second passage without saving records.
+- Real zoom testing found up to 1.55px of rounding drift when reusing only normalized rectangles captured at 75% at 150%. Version 2 locations now also store original page/text-node offsets. Newly selected/saved annotations and temporary previews reanchor after each page's text layer renders; legacy locations retain their normalized fallback. Rendering tests verify that saved annotations follow changed glyph metrics after zoom without reloading the PDF.
+- Real Attention PDF: title marked pink and a phrase spanning two abstract lines marked cyan simultaneously. Observed preview-vs-text-range edge differences after reanchoring were below 0.03 CSS px at 75%, 100%, 150% and a settled 390px viewport. Screenshot inspection confirms the marks cover the corresponding title and body text. These marks remain temporary; the paper still has zero saved annotations.
+- Real Causal Forcing++ PDF: complete two-line title matched as one result/two text ranges; a failed subsequent search retained both preview rectangles. Its original 135 saved rectangles and all 18 page slots remained present. Restored normal 100%/Agent-open layout and original connected Codex session.
+- 69 tests pass, including split words/lines, ligatures/accents/repeated matches, line-break hyphens, page boundaries, clipping, cross-page user-selection offsets, text-metric reanchoring and legacy fallback. Production build passes with the existing bundle-size advisory.

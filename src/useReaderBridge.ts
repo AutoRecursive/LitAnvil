@@ -1,3 +1,4 @@
+import { findPdfText, paintPdfPreview } from "./pdf-text";
 import { subscribeLive, liveClientId } from "./live";
 import { api, assetUrl } from "./api";
 import { currentPdfPage, scrollReaderTo } from "./reader-position";
@@ -171,76 +172,30 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
               .forEach((mark) => mark.remove());
             break;
           case "preview_text": {
+            if (command.page !== undefined && (!Number.isInteger(command.page) || command.page < 1)) throw new Error("无效页码");
             if (!state.selected) throw new Error("请先打开文档");
             await waitReady(state.selected.id, command.page || 1);
-            state.reader.current
-              ?.querySelectorAll(".agent-preview")
-              .forEach((mark) => mark.remove());
             const needle = String(command.text || "").trim();
             if (!needle) throw new Error("缺少定位文本");
-            const spans = [
-              ...(state.reader.current?.querySelectorAll<HTMLElement>(
-                ".textLayer span",
-              ) || []),
-            ];
-            const matched = spans.filter(
-              (span) =>
-                (!command.page ||
-                  Number(
-                    span.closest<HTMLElement>(".pdf-page")?.dataset.page,
-                  ) === command.page) &&
-                span.textContent?.toLowerCase().includes(needle.toLowerCase()),
-            );
-            matched.sort(
-              (a, b) =>
-                Math.abs(
-                  a.getBoundingClientRect().top -
-                    (state.reader.current?.getBoundingClientRect().top || 0),
-                ) -
-                Math.abs(
-                  b.getBoundingClientRect().top -
-                    (state.reader.current?.getBoundingClientRect().top || 0),
-                ),
-            );
-            if (!matched.length)
-              throw new Error("未找到文本，请缩短到单行内的连续短语");
-            const locationRects: { page: number; x: number; y: number; w: number; h: number }[] = [];
-            for (const span of matched) {
-              const page = span.closest<HTMLElement>(".pdf-page")!;
-              const start = span
-                .textContent!.toLowerCase()
-                .indexOf(needle.toLowerCase());
-              if (!span.firstChild) continue;
-              const range = document.createRange();
-              range.setStart(span.firstChild, start);
-              range.setEnd(span.firstChild, start + needle.length);
-              const box = page.getBoundingClientRect();
-              for (const rect of range.getClientRects()) {
-                if (span === matched[0]) locationRects.push({
-                  page: Number(page.dataset.page), x: (rect.left - box.left) / box.width,
-                  y: (rect.top - box.top) / box.height, w: rect.width / box.width, h: rect.height / box.height,
-                });
-                const mark = document.createElement("div");
-                mark.className = "agent-preview";
-                mark.style.cssText = `left:${((rect.left - box.left) / box.width) * 100}%;top:${((rect.top - box.top) / box.height) * 100}%;width:${(rect.width / box.width) * 100}%;height:${(rect.height / box.height) * 100}%;background:${command.color === "pink" ? "#ec489955" : command.color === "blue" ? "#3b82f655" : "#06b6d455"}`;
-                page.append(mark);
-              }
+            if (!command.page) {
+              const lastPage = state.reader.current?.querySelectorAll(".pdf-page").length || 1;
+              await waitReady(state.selected.id, lastPage);
             }
-            scrollReaderTo(state.reader.current!, matched[0], true);
+            const matched = findPdfText(state.reader.current!, needle, command.page);
+            matched.sort((a, b) =>
+              Math.abs(a.element.getBoundingClientRect().top - state.reader.current!.getBoundingClientRect().top) -
+              Math.abs(b.element.getBoundingClientRect().top - state.reader.current!.getBoundingClientRect().top));
+            if (!matched.length) throw new Error("未找到文本，请核对原文或指定页码");
+            if (!command.append) state.reader.current!.querySelectorAll(".agent-preview").forEach(mark => mark.remove());
+            for (const match of matched) paintPdfPreview(state.reader.current!, match.rects, match.textRanges,
+              command.color === "pink" ? "#ec489955" : command.color === "blue" ? "#3b82f655" : "#06b6d455", crypto.randomUUID());
+            scrollReaderTo(state.reader.current!, matched[0].element, true);
             details = {
               matches: matched.length,
               quote: needle,
-              location: JSON.stringify({ rects: locationRects }),
+              location: JSON.stringify({ version: 2, rects: matched[0].rects, textRanges: matched[0].textRanges }),
               color: command.color || "cyan",
-              pages: [
-                ...new Set(
-                  matched.map((span) =>
-                    Number(
-                      span.closest<HTMLElement>(".pdf-page")?.dataset.page,
-                    ),
-                  ),
-                ),
-              ],
+              pages: [...new Set(matched.flatMap(match => match.rects.map(rect => rect.page)))],
             };
             break;
           }

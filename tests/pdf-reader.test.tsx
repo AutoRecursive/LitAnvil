@@ -3,10 +3,24 @@ import React, {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 
-const pdf = vi.hoisted(() => ({load: vi.fn(), destroy: vi.fn(), render: vi.fn(), resize: undefined as undefined | (() => void)}));
+const pdf = vi.hoisted(() => ({load: vi.fn(), destroy: vi.fn(), render: vi.fn(), text: '', glyphOffset: 0, resize: undefined as undefined | (() => void)}));
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {}, getDocument: pdf.load,
-  TextLayer: class {render() {return Promise.resolve()} cancel() {}},
+  TextLayer: class {
+    constructor(private options: {container: HTMLElement}) {}
+    render() {
+      if (pdf.text) {
+        const span=document.createElement('span'); span.textContent=pdf.text;
+        span.getBoundingClientRect=()=>{
+          const page=this.options.container.parentElement!.getBoundingClientRect();
+          return {left:20,right:60,top:page.top+50+pdf.glyphOffset,bottom:page.top+62+pdf.glyphOffset,width:40,height:12} as DOMRect;
+        };
+        this.options.container.append(span);
+      }
+      return Promise.resolve();
+    }
+    cancel() {}
+  },
 }));
 import {PdfReader} from '../src/PdfReader';
 
@@ -16,7 +30,7 @@ let width: number;
 beforeEach(() => {
   vi.useFakeTimers();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  width = 600;
+  width = 600; pdf.text=""; pdf.glyphOffset=0;
   pdf.load.mockReset(); pdf.destroy.mockReset(); pdf.render.mockReset();
   pdf.render.mockImplementation(() => ({promise: Promise.resolve(), cancel: vi.fn()}));
   pdf.load.mockImplementation(() => ({promise: Promise.resolve({numPages: 3, getPage: async () => ({
@@ -32,14 +46,14 @@ beforeEach(() => {
     const previous = Array.from(this.parentElement?.children || []).slice(0, Number(this.dataset.page) - 1) as HTMLElement[];
     const top = previous.reduce((sum, page) => sum + parseFloat(page.style.height) + 14, 0) - article.scrollTop;
     const height = parseFloat(this.style.height) || 0;
-    return {top, bottom: top + height, height} as DOMRect;
+    return {left:0,right:parseFloat(this.style.width)||600,width:parseFloat(this.style.width)||600,top, bottom: top + height, height} as DOMRect;
   });
   root = createRoot(article);
 });
 afterEach(async () => {await act(async () => root.unmount()); article.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()});
 
-async function show(scale = 1.25) {
-  await act(async () => root.render(<PdfReader src="/paper.pdf" scale={scale} onSelection={() => {}}/>));
+async function show(scale = 1.25, annotations: {location:string;note:string}[] = []) {
+  await act(async () => root.render(<PdfReader src="/paper.pdf" scale={scale} annotations={annotations} onSelection={() => {}}/>));
   await act(async () => vi.advanceTimersByTime(100));
 }
 
@@ -81,4 +95,23 @@ it('preserves the current page and within-page position when zooming', async () 
   const nextHeight = parseFloat(pages[0].style.height);
   expect(article.scrollTop).toBeCloseTo(nextHeight + 14 + nextHeight * 0.4);
   expect(pdf.load).toHaveBeenCalledTimes(1);
+});
+
+
+it('restores saved text-anchored annotations at the rendered glyphs after a font-metric change', async () => {
+  pdf.text='anchor';
+  Object.defineProperty(Range.prototype,'getClientRects',{configurable:true,value:function(this:Range){return [this.startContainer.parentElement!.getBoundingClientRect()]}});
+  try {
+    const annotations=[{note:'saved note',location:JSON.stringify({version:2,rects:[{page:2,x:0.1,y:0.2,w:0.2,h:0.02}],textRanges:[{page:2,node:0,start:0,end:6}]})}];
+    await show(1.25,annotations);
+    const page=article.querySelector<HTMLElement>('.pdf-page[data-page="2"]')!;
+    let mark=page.querySelector<HTMLElement>('.saved-highlight')!;
+    expect(parseFloat(mark.style.top)/100*parseFloat(page.style.height)).toBeCloseTo(50);
+    pdf.glyphOffset=3;
+    await show(1.5,annotations);
+    mark=page.querySelector<HTMLElement>('.saved-highlight')!;
+    expect(parseFloat(mark.style.top)/100*parseFloat(page.style.height)).toBeCloseTo(53);
+    expect(pdf.load).toHaveBeenCalledTimes(1);
+    expect(page.querySelectorAll('.saved-highlight')).toHaveLength(1);
+  } finally { delete (Range.prototype as any).getClientRects; }
 });

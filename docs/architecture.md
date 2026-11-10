@@ -62,3 +62,8 @@ Tests cover native Codex lifecycle/reconnect, canonical projections, streamed Cl
 This is a localhost runtime and reader client. Cross-device relay, encrypted remote synchronization, arbitrary native-terminal takeover and a multi-session browsing UI are outside the current implementation. Claude idle transcript polling observes completed native changes; concurrently running the same native session from another tool is not a supported takeover mechanism.
 
 References: [Happy](https://github.com/slopus/happy), [Happy session protocol](https://github.com/slopus/happy/blob/main/packages/happy-wire/src/sessionProtocol.ts), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript).
+
+
+## PDF text locations
+
+`src/pdf-text.ts` maps normalized search offsets back to the original PDF text nodes. Version 2 annotation locations contain both normalized `rects` and `textRanges` (`page`, text-node index, `start`, `end`). After font metrics change on zoom/resize, the renderer rebuilds rectangles from text offsets once the page is ready. Existing version 1 rectangles remain the fallback. User selections and agent preview results use the same location representation; previews are never saved implicitly.

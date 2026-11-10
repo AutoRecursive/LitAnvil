@@ -1,3 +1,4 @@
+import { rectsFromTextRanges, repaintPdfPreviews } from "./pdf-text";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -15,10 +16,11 @@ function paintAnnotations(container: HTMLElement, annotations: Annotation[]) {
   for (const annotation of annotations) {
     try {
       const anchor = JSON.parse(annotation.location);
-      for (const rect of anchor.rects || []) {
-        const page = container.querySelector<HTMLElement>(
-          `.pdf-page[data-page="${rect.page}"]`,
-        );
+      const exact = rectsFromTextRanges(container, anchor.textRanges);
+      const anchoredPages = new Set(exact.map(rect => rect.page));
+      const rects = [...exact, ...(anchor.rects || []).filter((rect: {page:number}) => !anchoredPages.has(rect.page))];
+      for (const rect of rects) {
+        const page = container.dataset.page === String(rect.page) ? container : container.querySelector<HTMLElement>(`.pdf-page[data-page="${rect.page}"]`);
         if (!page) continue;
         const mark = document.createElement("div");
         mark.className = "saved-highlight";
@@ -204,7 +206,11 @@ export const PdfReader = React.memo(
               viewport,
             });
             await textLayer.render();
-            if (!cancelled) element.dataset.ready = "true";
+            if (!cancelled) {
+              element.dataset.ready = "true";
+              paintAnnotations(element, annotationsRef.current);
+              repaintPdfPreviews(element);
+            }
           }
         } catch (error) {
           if (!cancelled) {

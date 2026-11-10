@@ -1,3 +1,4 @@
+import { pdfSelectionLocation } from "./pdf-text";
 import { API, api, assetUrl } from "./api";
 import { Dialog } from "./Dialog";
 import { TrashDialog } from "./TrashDialog";
@@ -273,28 +274,8 @@ export function App() {
     const text = sel.toString().trim();
     if (!text) return;
     const range = sel.getRangeAt(0);
-    const rects: any[] = [];
-    reader.current
-      .querySelectorAll<HTMLElement>(".pdf-page")
-      .forEach((page) => {
-        const bounds = page.getBoundingClientRect();
-        for (const r of range.getClientRects()) {
-          const x = Math.max(r.left, bounds.left),
-            y = Math.max(r.top, bounds.top),
-            right = Math.min(r.right, bounds.right),
-            bottom = Math.min(r.bottom, bounds.bottom);
-          if (right > x && bottom > y)
-            rects.push({
-              page: Number(page.dataset.page),
-              x: (x - bounds.left) / bounds.width,
-              y: (y - bounds.top) / bounds.height,
-              w: (right - x) / bounds.width,
-              h: (bottom - y) / bounds.height,
-            });
-        }
-      });
     setSelection(text);
-    setSelectionLocation(JSON.stringify({ version: 1, rects }));
+    setSelectionLocation(JSON.stringify(pdfSelectionLocation(reader.current, range)));
     setNote("");
     setRightOpen(true);
   }

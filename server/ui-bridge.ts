@@ -121,6 +121,7 @@ export const uiTools = [
         documentId: { type: "string" },
         page: { type: "integer", minimum: 1 },
         text: { type: "string" },
+        append: { type: "boolean", description: "Keep earlier temporary previews when marking another passage; default false." },
         color: { type: "string", enum: ["cyan", "pink", "blue"] },
         zoom: { type: "number", minimum: 0.75, maximum: 1.8 },
         open: { type: "boolean" },
