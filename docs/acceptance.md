@@ -15,9 +15,8 @@
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - Global plugins/MCP currently inherited; restrict to intended project config without changing global config.
 - Further visual selection checks at different zooms, multiline agent preview, and manual page navigation.
-- Documents: improve imported PDF titles, recoverable deletion and legacy-file hash coverage.
 - Extend MCP reader controls with accurate UI state, loaded-page acknowledgement, tab targeting and remaining document/annotation operations.
-- Export Markdown formatting, import failure cleanup, modal keyboard focus, and final runtime launch audit.
+- Final runtime launch audit, project settings isolation and completion of the remaining interaction checks.
 
 ## Additional evidence
 - 2026-11-10: highlight saved as normalized page rectangles; browser refresh restores 135 selected text rectangles. Comment edited and recovered after refresh.
@@ -64,3 +63,13 @@
 - Real 390px viewport drags changed PDF/chat share 60→50% and drawer width 320→280px. No horizontal overflow; 18 PDF page slots retained. Double-click restored all defaults.
 - 37 tests pass, including drag bounds/keyboard/reset and current-page geometry. Production build passes with the existing large-bundle advisory.
 - Final real-agent check: Claude reported page 2 and matches=4 after navigation/preview/state tools. Switching back to Codex restored its original seven-message history; a new Codex turn recalled 蓝鲸42 rather than Claude's 海鸥73. All 18 PDF canvases remained present.
+
+## Library recovery and import/export reliability (2026-11-10)
+- Library routes extracted to server/library.ts. Document and annotation deletion is recoverable; undo and a persistent recycle-bin dialog restore the same IDs, original files, notes and normalized PDF rectangles. No permanent purge route is exposed. Active library/MCP/context queries exclude deleted records. Annotation updates cannot rewrite identity or document ownership.
+- Imports validate real PDF data, clean failed/duplicate temporary uploads, enforce 100MB upload/download limits, and serialize mutations until the handler completes even if the HTTP client disconnects. Tests prove a canceled client cannot overwrite a later import.
+- Original-file SHA256 backfill and persistent URL aliases avoid duplicate records and repeated alias downloads. Metadata-only legacy PDF/arXiv records upgrade in place; reimporting a trashed cached document restores it. PDF title extraction rejects license boilerplate.
+- Real legacy Attention Is All You Need record 0ab17e38-19ca-4a66-a03a-4d8186320db7 upgraded to a readable 15-page PDF. Both real documents retain their IDs; the existing Causal Forcing++ annotation remains present.
+- Markdown export preserves actual line breaks, Markdown/math source and quoted frontmatter. Notes/config exports use atomic file replacement. A notes-export failure reports a warning after preserving committed DB records and PDF bytes, rather than deleting a referenced file.
+- Browser recovery checks use an isolated temporary DB/uploads/notes and a deterministic transport, never the user's real library: document delete→undo, recycle-bin restore, annotation delete→undo/restore, restored PDF rendering/highlight/math, Tab containment, Esc, Enter and focus return all verified. Temporary data removed and the real server restored.
+- Isolation exposed a dev file-address bug: PDF assets now resolve against the API origin, with matching agent readiness checks. Restored fixture PDF rendered from the isolated backend rather than Vite's filesystem.
+- 48 tests pass; production build passes with the existing bundle-size advisory.

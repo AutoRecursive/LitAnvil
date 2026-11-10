@@ -20,6 +20,7 @@ Choose a notes directory from the header. Agent sessions are separated by direct
 - Import an arXiv URL from chat, or upload PDF / Markdown / text from the library.
 - Select PDF text and save a highlight or Markdown comment from the right composer. Comments support `$inline math$` and `$$display math$$`, with editing and deletion in the left panel.
 - Drag panel boundaries to resize sidebars and document/annotation sections. At narrow widths the PDF/chat boundary adjusts their heights. The header and reader toolbar also have draggable lower edges.
+- Deleted documents and comments can be undone immediately or restored from the library recycle bin.
 - Double-click a separator to restore its default size; focused separators support arrow keys and Home. Layout dimensions are saved in this browser.
 - Agents use the local MCP interface to navigate pages and create temporary colored previews. Temporary previews do not create annotations.
 

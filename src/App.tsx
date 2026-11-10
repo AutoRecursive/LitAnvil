@@ -1,3 +1,6 @@
+import { API, api, assetUrl } from "./api";
+import { Dialog } from "./Dialog";
+import { TrashDialog } from "./TrashDialog";
 import { ResizeHandle } from "./ResizeHandle";
 import { usePaneLayout } from "./usePaneLayout";
 import { Markdown } from "./Markdown";
@@ -36,20 +39,6 @@ type QueueItem = {
   progress: number;
   message: string;
 };
-const API = "http://localhost:8787/api";
-
-async function api(path: string, init?: RequestInit) {
-  const r = await fetch(API + path, init);
-  if (!r.ok) {
-    const text = await r.text();
-    let message = text;
-    try {
-      message = JSON.parse(text).error || text;
-    } catch {}
-    throw new Error(message);
-  }
-  return r.json();
-}
 export function App() {
   const sidebarSections = useRef<HTMLDivElement>(null);
   const readerLayout = useRef<HTMLDivElement>(null);
@@ -77,10 +66,23 @@ export function App() {
   const [editNote, setEditNote] = useState("");
   const [annotationPending, setAnnotationPending] = useState(false);
   const [dir, setDir] = useState("");
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [notice, setNotice] = useState<{
+    id: string;
+    kind: "document" | "annotation";
+    message: string;
+  } | null>(null);
+  const [undoPending, setUndoPending] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectError, setProjectError] = useState("");
   const reader = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const warning = (event: Event) =>
+      setError((event as CustomEvent<string>).detail);
+    window.addEventListener("litanvil-warning", warning);
+    return () => window.removeEventListener("litanvil-warning", warning);
+  }, []);
   useEffect(() => {
     api("/documents")
       .then((items: Doc[]) => {
@@ -122,14 +124,6 @@ export function App() {
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
-  useEffect(() => {
-    if (!projectOpen) return;
-    const listener = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProjectOpen(false);
-    };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, [projectOpen]);
   useReaderBridge({
     docs,
     selected,
@@ -215,12 +209,36 @@ export function App() {
       setImporting(false);
     }
   }
+  async function refreshLibrary() {
+    try {
+      setDocs(await api("/documents"));
+      if (selected) setAnns(await api(`/documents/${selected.id}/annotations`));
+    } catch (error) {
+      setError(String(error));
+    }
+  }
+  async function undoDelete() {
+    if (!notice || undoPending) return;
+    setUndoPending(true);
+    try {
+      await api(
+        `/${notice.kind === "document" ? "documents" : "annotations"}/${notice.id}/restore`,
+        { method: "POST" },
+      );
+      await refreshLibrary();
+      setNotice(null);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setUndoPending(false);
+    }
+  }
   async function deleteDocument(id: string) {
-    if (!window.confirm("删除这篇文档及其批注？")) return;
     try {
       await api(`/documents/${id}`, { method: "DELETE" });
       setDocs((xs) => xs.filter((x) => x.id !== id));
       if (selected?.id === id) closeDocument();
+      setNotice({ id, kind: "document", message: "文档已移入回收站" });
     } catch (e) {
       setError(String(e));
     }
@@ -305,6 +323,8 @@ export function App() {
   }
   function openDocument(document: Doc) {
     setSelected(document);
+    if (document.sourceType === "arxiv" && !document.fileUrl && !importing)
+      void importUrl(document.source);
     if (window.innerWidth <= 900) setLeftOpen(false);
   }
   function closeDocument() {
@@ -316,6 +336,7 @@ export function App() {
       await api(`/annotations/${id}`, { method: "DELETE" });
       setAnns((items) => items.filter((a) => a.id !== id));
       if (editingAnn === id) setEditingAnn(null);
+      setNotice({ id, kind: "annotation", message: "批注已移入回收站" });
     } catch (e) {
       setError(String(e));
     }
@@ -363,11 +384,13 @@ export function App() {
     api("/project")
       .then((result) => {
         setDir(result.directory);
+        if (result.syncError) setError(result.syncError);
         setProjectDraft(result.directory);
       })
       .catch((e) => setError(String(e)));
   }, []);
-  async function chooseDir() {
+  async function chooseDir(event: React.MouseEvent<HTMLButtonElement>) {
+    event.currentTarget.focus();
     setProjectDraft(dir);
     setProjectError("");
     setProjectOpen(true);
@@ -381,6 +404,7 @@ export function App() {
       });
       setDir(result.directory);
       setProjectOpen(false);
+      if (result.syncError) setError(result.syncError);
     } catch (e) {
       setProjectError(String(e));
     }
@@ -413,26 +437,47 @@ export function App() {
   return (
     <div className={dark ? "app dark" : "app"} style={panes.style}>
       {projectOpen && (
-        <div className="modal-backdrop">
-          <section
-            className="project-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="笔记目录"
+        <Dialog title="笔记目录" onClose={() => setProjectOpen(false)}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveProject();
+            }}
           >
-            <h2>笔记目录</h2>
             <input
               autoFocus
               aria-label="目录路径"
               value={projectDraft}
-              onChange={(e) => setProjectDraft(e.target.value)}
+              onChange={(event) => setProjectDraft(event.target.value)}
             />
             {projectError && <p role="alert">{projectError}</p>}
-            <div>
-              <button onClick={() => setProjectOpen(false)}>取消</button>
-              <button onClick={saveProject}>保存</button>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setProjectOpen(false)}>
+                取消
+              </button>
+              <button type="submit">保存</button>
             </div>
-          </section>
+          </form>
+        </Dialog>
+      )}
+      {trashOpen && (
+        <TrashDialog
+          onClose={() => setTrashOpen(false)}
+          onRestored={async (id) => {
+            await refreshLibrary();
+            if (notice?.id === id) setNotice(null);
+          }}
+        />
+      )}
+      {notice && (
+        <div className="undo-notice" role="status">
+          <span>{notice.message}</span>
+          <button disabled={undoPending} onClick={undoDelete}>
+            撤销
+          </button>
+          <button aria-label="关闭撤销提示" onClick={() => setNotice(null)}>
+            ×
+          </button>
         </div>
       )}
       {error && (
@@ -705,16 +750,27 @@ export function App() {
                     <b>
                       全部文档 <span>{docs.length}</span>
                     </b>
-                    <label className="upload">
-                      ＋ 上传文档
-                      <input
-                        aria-label="上传文档"
-                        type="file"
-                        accept=".pdf,.txt,.md"
-                        disabled={importing}
-                        onChange={importFile}
-                      />
-                    </label>
+                    <div className="library-tools">
+                      <button
+                        className="trash-toggle"
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          setTrashOpen(true);
+                        }}
+                      >
+                        回收站
+                      </button>
+                      <label className="upload">
+                        ＋ 上传文档
+                        <input
+                          aria-label="上传文档"
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          disabled={importing}
+                          onChange={importFile}
+                        />
+                      </label>
+                    </div>
                   </div>
                   <input
                     className="library-search"
@@ -839,6 +895,8 @@ export function App() {
                         /^https?:\/\//.test(selected.source)
                           ? selected.source
                           : selected.fileUrl
+                            ? assetUrl(selected.fileUrl)
+                            : undefined
                       }
                       target="_blank"
                       rel="noreferrer"
@@ -849,20 +907,26 @@ export function App() {
                   {selected.sourceType === "arxiv" ? (
                     selected.fileUrl ? (
                       <PdfReader
-                        src={selected.fileUrl}
+                        src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}
                       />
                     ) : (
                       <div className="pdf-error">
-                        PDF 未准备好，无法打开阅读器。
+                        {importing ? (
+                          "正在准备 PDF…"
+                        ) : (
+                          <button onClick={() => importUrl(selected.source)}>
+                            重新下载 PDF
+                          </button>
+                        )}
                       </div>
                     )
                   ) : selected.sourceType === "pdf" ? (
                     selected.fileUrl ? (
                       <PdfReader
-                        src={selected.fileUrl}
+                        src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}

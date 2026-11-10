@@ -48,7 +48,7 @@ SSE reconnect sends the current full snapshot; clients do not have to reconstruc
 
 The notes directory remains the agent working directory. Claude loads project settings only and explicitly receives the LitAnvil MCP server. `claude-auth.ts` reuses only allowlisted authentication environment values and the account model default (project model wins); credentials stay in process memory and are not written to the runtime journal or project config. Native CLI OAuth/keychain login remains available. Codex global configuration inheritance is an existing limitation tracked in acceptance.md.
 
-The reader stores documents in `data/db.json`, original files in `uploads/`, and normalized annotations in notes exports. Annotation Markdown stays source text in JSON and is rendered through the same Markdown/KaTeX component as agent answers.
+The reader library routes live in `server/library.ts`: `data/db.json` stores documents and annotations, original files live in `uploads/`, and notes are exported atomically. A `deletedAt` marker preserves deleted records and original files for undo/recycle-bin recovery. Active library, context and MCP queries filter these records. URL aliases and original-file hashes back the import cache. PDF assets are resolved against the API origin. Annotation Markdown stays source text in JSON and is rendered through the same Markdown/KaTeX component as agent answers.
 
 ## Validation and current scope
 

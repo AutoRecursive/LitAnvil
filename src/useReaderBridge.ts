@@ -1,3 +1,4 @@
+import { assetUrl } from "./api";
 import { currentPdfPage, scrollReaderTo } from "./reader-position";
 import {
   useEffect,
@@ -91,7 +92,11 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           return false;
         if (!["pdf", "arxiv"].includes(selected.sourceType)) return true;
         const pdf = reader.current.querySelector<HTMLElement>(".pdf-reader");
-        if (pdf?.dataset.source !== selected.fileUrl) return false;
+        if (
+          !selected.fileUrl ||
+          pdf?.dataset.source !== assetUrl(selected.fileUrl)
+        )
+          return false;
         const pages = reader.current.querySelectorAll(".pdf-page");
         if (pages.length && page > pages.length)
           throw new Error(`页码超出范围，共 ${pages.length} 页`);
