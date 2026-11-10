@@ -162,14 +162,12 @@ app.get("/api/project", async (_req, res) =>
 );
 app.put("/api/project", async (req, res) => {
   try {
-    if (session.state.status === "running")
-      return res.status(409).json({ error: "请等待当前回答结束后切换目录" });
-    const directory = await workspace.configure(
-      String(req.body.directory || ""),
-    );
-    const db = await readDb();
-    await syncNotes(db);
-    res.json({ directory, syncError: notesSyncError });
+    const result = await session.changeWorkspace(async () => {
+      const directory = await workspace.configure(String(req.body.directory || ""));
+      await syncNotes(await readDb());
+      return directory;
+    });
+    res.json({directory:result.value,syncError:notesSyncError,agentError:result.agentError});
   } catch (e) {
     res.status(400).json({ error: String(e) });
   }

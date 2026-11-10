@@ -211,3 +211,49 @@ it("reports persistence failures to clients and recovers when storage becomes wr
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+it('rejects stale-session send/stop/clear/provider actions without changing the current context',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-stale-action-'));
+ const runtime=new AgentRuntime(root,async()=>root,path.join(root,'data'),factory);
+ try{
+  await runtime.connect();const previous={sessionId:runtime.state.sessionId,workspace:runtime.state.workspace};
+  await runtime.clear();const current=runtime.state.sessionId;
+  await expect(runtime.send('wrong context',undefined,previous)).rejects.toThrow('会话已切换');
+  await expect(runtime.stop(previous)).rejects.toThrow('会话已切换');
+  await expect(runtime.clear(previous)).rejects.toThrow('会话已切换');
+  await expect(runtime.select('claude',previous)).rejects.toThrow('会话已切换');
+  expect(runtime.state.sessionId).toBe(current);expect(runtime.state.items).toEqual([]);expect(runtime.state.provider).toBe('codex');
+  await runtime.send('current context',undefined,{sessionId:current,workspace:root});
+  await expect(runtime.send('second concurrent message')).rejects.toThrow('尚未结束');
+  expect(runtime.state.items).toHaveLength(1);
+ }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});
+it('serializes message admission before an adapter publishes its running state',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-submit-race-'));let release!:()=>void;
+ class SlowAdapter extends FakeAdapter{async send(text:string){await new Promise<void>(resolve=>{release=resolve});await super.send(text)}}
+ const runtime=new AgentRuntime(root,async()=>root,path.join(root,'data'),(provider,options)=>new SlowAdapter(provider,options.storageDir));
+ try{
+  await runtime.connect();const sending=runtime.send('first');
+  while(!release)await new Promise(resolve=>setTimeout(resolve,0));
+  await expect(runtime.send('duplicate')).rejects.toThrow('重复发送');
+  await expect(runtime.select('claude')).rejects.toThrow('正在提交');
+  release();await sending;expect(runtime.state.items).toHaveLength(1);
+ }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});
+it('switches project configuration and authoritative session together while rejecting concurrent sends',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-workspace-change-'));let workspace=path.join(root,'first');
+ const runtime=new AgentRuntime(root,async()=>workspace,path.join(root,'data'),factory);
+ try{
+  await runtime.connect();const old=runtime.state.sessionId;let release!:()=>void;
+  const changing=runtime.changeWorkspace(async()=>{await new Promise<void>(resolve=>{release=resolve});workspace=path.join(root,'second');return workspace});
+  while(!release)await new Promise(resolve=>setTimeout(resolve,0));
+  await expect(runtime.send('must wait')).rejects.toThrow('切换上下文');
+  release();const result=await changing;
+  expect(result.agentError).toBeUndefined();expect(runtime.state.workspace).toBe(workspace);
+  expect(result.value).toBe(workspace);
+  await runtime.send('first message in new project',undefined,{sessionId:runtime.state.sessionId,workspace});
+  expect(runtime.state.items[0]).toMatchObject({text:'first message in new project'});
+  await expect(runtime.changeWorkspace(async()=>{throw Error('should not execute')})).rejects.toThrow('当前操作');
+  await runtime.stop();
+ }finally{runtime.close();await runtime.flush();await fs.rm(root,{recursive:true,force:true})}
+});

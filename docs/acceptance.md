@@ -11,11 +11,11 @@
 - Build passes; tests/session.test.ts passes (stream projection and stale-thread isolation).
 
 ## Remaining verification / implementation
-- Real browser stop/clear/reconnect and multiple-tab synchronization (transport tests cover stop/clear/resume; real restart/resume already verified).
+- Further concurrent multi-tab action checks; real native stop/clear/reconnect and live library synchronization are verified below.
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - User-level Codex configuration isolation is verified below; system/organization policy remains applicable.
 - Further manual text-selection checks beyond the existing PDF fixtures; multiline agent preview and manual page navigation are verified below.
-- Finish remaining manual PDF selection cases, layout/export controls and real stop/clear/reconnect checks. Document/annotation MCP operations and cross-tab updates are verified below.
+- Finish remaining manual PDF selection cases and layout/export controls. Native stop/clear/reconnect checks are verified below. Document/annotation MCP operations and cross-tab updates are verified below.
 - Final runtime launch audit and completion of the remaining interaction checks.
 
 ## Additional evidence
@@ -108,3 +108,12 @@
 - Separate temporary git project: its `.codex/config.toml` reasoning setting loaded and its sole project-fixture skill appeared enabled with repo scope. Temporary project data removed afterward.
 - Real frontend after restarting the updated server: Codex successfully called get_reader_state and replied with page 1 and the original remembered 蓝鲸42. Reload preserved that answer, all 15 Attention page slots and the connected session.
 - 73 tests pass, including private config permissions, absence of global config/instructions, shared fake auth updates, external skill/symlink handling, account mismatch preservation, selected-rollout migration and native history event sharing. Production build passes with the existing bundle-size advisory.
+
+## Chat admission, context switching and startup recovery (2026-11-10)
+- The frontend uses the same send eligibility for Enter and the send button. Connecting state retains drafts; synchronous request locks prevent duplicate Enter/click submissions. A separately guarded stop remains available while message admission is pending. Valid full arXiv links can still enter the import queue when the agent is unavailable; shared URL validation rejects non-HTTP URLs, partial IDs and misleading hostnames.
+- Draft/recovery state is shared across homepage/PDF Chat remounts. A failed request restores its text when the input is empty; newer typing is retained with the failed request separately recoverable. Restoring one message preserves the other rather than silently combining unrelated questions.
+- Frontend actions bind to the displayed native session and workspace. Runtime checks reject stale send/stop/clear/provider requests before changing context. Admission is serialized even before an adapter publishes running state. Directory changes lock out concurrent actions and connect the new authoritative session before returning; connection failures after a saved directory change are reported distinctly.
+- Real native checks used a temporary notes workspace: Codex and Claude each stopped a newly submitted long turn, cleared to a different native session ID and answered the first short request in the new context. PDF retained all 15 page slots. Returning to the original notes directory restored the original Codex history/蓝鲸42 answer. The temporary workspace and its runtime scope were removed after stopping the server; original files/history were retained.
+- Disconnect test reproduced an additional PDF-loss path: development watchers reacted to generated runtime cache files, reloaded the app while the backend was down, and the recovered library did not reopen the saved document. Vite now ignores data/uploads/notes/logs, limits optimizer entry discovery to index.html and denies direct development-server access to private runtime files. Writing HTML/package fixtures in all four runtime directories produced no new reload/connect/layout log events; /data/db.json returns 403.
+- Startup failures now recover the saved document ID and project directory from a fresh live library event, while ignoring explicit user closes or switches. Stale startup errors clear after recovery. Real cold-open-with-backend-down test preserved the draft, then restored Attention's 15 pages, original Codex history and connected state after backend restart without another user navigation.
+- 83 tests pass, including Enter/button admission, same-tick duplicate Enter, stop during pending submission, draft recovery across remounts, stale-session HTTP/runtime guards, workspace-change races and initial-library-failure recovery. Test discovery is restricted to project tests so runtime-cached plugin test files cannot enter the suite. Production build passes with the existing bundle-size advisory.

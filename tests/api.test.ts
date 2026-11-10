@@ -480,3 +480,20 @@ it('multiplexes agent snapshots, reader commands and library changes on one conn
     expect((await next('library')).revision).toBeGreaterThan(0);
   } finally { controller.abort(); }
 });
+
+it('checks the frontend session target on all chat actions so stale tabs cannot affect a new context', async () => {
+  const post=async(action:string,body:any)=>{
+    const response=await fetch(base+'/api/agent/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    return {ok:response.ok,body:await response.json()};
+  };
+  const old=await(await fetch(base+'/api/agent/state')).json();
+  expect((await post('clear',{expectedSessionId:old.sessionId,expectedWorkspace:old.workspace})).ok).toBe(true);
+  const current=await(await fetch(base+'/api/agent/state')).json();
+  expect(current.sessionId).not.toBe(old.sessionId);
+  for(const [action,extra] of [['message',{text:'must not be delivered'}],['stop',{}],['clear',{}],['provider',{provider:'claude'}]] as const){
+    const result=await post(action,{...extra,expectedSessionId:old.sessionId,expectedWorkspace:old.workspace});
+    expect(result.ok).toBe(false);expect(result.body.error).toContain('会话已切换');
+  }
+  const after=await(await fetch(base+'/api/agent/state')).json();
+  expect(after.sessionId).toBe(current.sessionId);expect(after.items).toEqual(current.items);
+});

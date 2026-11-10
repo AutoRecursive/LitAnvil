@@ -70,3 +70,10 @@ References: [Happy](https://github.com/slopus/happy), [Happy session protocol](h
 
 
 Codex isolation follows the official [state/config locations](https://developers.openai.com/codex/config-advanced/) and [project configuration reference](https://developers.openai.com/codex/config-reference/). An empty CLI override table is insufficient: native configuration merges tables recursively, so isolation uses a separate home rather than attempting to erase the user's tables.
+
+
+## Chat actions and development isolation
+
+Frontend chat actions include expected session/workspace identifiers. The runtime serializes message admission and directory changes, rejects stale targets, and keeps stop available during native turn admission. Draft and failed-message recovery state lives in a per-tab external store so changing the presentation between homepage and PDF cannot lose asynchronous failure recovery.
+
+Development tooling ignores and denies serving the runtime data, notes, uploads and logs directories. Native plugin caches may contain third-party HTML/package/test files even while the plugins are disabled; these files must not trigger Vite reloads, become optimizer entrypoints or participate in project tests. A library live reconnect recovers a saved document after an initial backend outage and clears only its stale startup error.

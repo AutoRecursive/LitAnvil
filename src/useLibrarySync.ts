@@ -4,21 +4,24 @@ import { api } from "./api";
 
 type Document = { id: string; progress: number };
 /** Library changes can originate in another tab or an agent, without changing the open reader. */
-export function useLibrarySync<T extends Document, A>({ selected, setDocuments, setSelected, setAnnotations }: {
+export function useLibrarySync<T extends Document, A>({ selected, setDocuments, setSelected, setAnnotations, onSynced }: {
   selected: T | null;
+  onSynced?: () => void;
   setDocuments: Dispatch<SetStateAction<T[]>>;
   setSelected: Dispatch<SetStateAction<T | null>>;
   setAnnotations: Dispatch<SetStateAction<A[]>>;
 }) {
   const current = useRef(selected);
   current.current = selected;
+  const synced=useRef(onSynced);
+  synced.current=onSynced;
   useEffect(() => {
     let disposed = false;
     let revision = 0;
     let timer: ReturnType<typeof setTimeout>;
     let retry = 1000;
     const refresh = async (request: number) => {
-      const documentId = current.current?.id;
+      const documentId = current.current?.id || sessionStorage.getItem("litanvil-open-document") || undefined;
       try {
         const documents: T[] = await api("/documents");
         const exists = documents.some(document => document.id === documentId);
@@ -27,10 +30,13 @@ export function useLibrarySync<T extends Document, A>({ selected, setDocuments, 
         if (disposed || request !== revision) return;
         retry = 1000;
         setDocuments(documents);
+        synced.current?.();
         // An old request must never reopen a reader the user closed or switched.
-        if (current.current?.id !== documentId) return;
+        if (current.current?.id !== documentId && (current.current || sessionStorage.getItem("litanvil-open-document") !== documentId)) return;
         setSelected(previous => {
-          if (!previous || previous.id !== documentId) return previous;
+          if (!previous) return sessionStorage.getItem("litanvil-open-document") === documentId
+            ? documents.find(document=>document.id===documentId) || null : null;
+          if (previous.id !== documentId) return previous;
           const next = documents.find(document => document.id === previous.id);
           if (!next) {
             sessionStorage.removeItem("litanvil-open-document");

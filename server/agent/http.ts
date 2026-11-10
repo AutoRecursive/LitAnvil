@@ -6,6 +6,7 @@ export function createAgentRouter(
   context: (body: any) => Promise<unknown> = async () => undefined,
 ) {
   const router = Router();
+  const target = (body: any) => ({sessionId:body?.expectedSessionId,workspace:body?.expectedWorkspace});
   router.get("/providers", async (_req, res) =>
     res.json(await runtime.providers()),
   );
@@ -51,7 +52,7 @@ export function createAgentRouter(
   });
   router.post("/provider", async (req, res) => {
     try {
-      await runtime.select(req.body.provider);
+      await runtime.select(req.body.provider, target(req.body));
       res.json(runtime.state);
     } catch (error) {
       res.status(409).json({ error: String(error) });
@@ -61,16 +62,16 @@ export function createAgentRouter(
     try {
       const text = String(req.body.text || "").trim();
       if (!text) return res.status(400).json({ error: "请输入消息" });
-      await runtime.send(text, await context(req.body));
+      await runtime.send(text, await context(req.body), target(req.body));
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ error: String(error) });
     }
   });
   for (const action of ["stop", "clear"] as const)
-    router.post("/" + action, async (_req, res) => {
+    router.post("/" + action, async (req, res) => {
       try {
-        await runtime[action]();
+        await runtime[action](target(req.body));
         res.json({ ok: true });
       } catch (error) {
         res.status(500).json({ error: String(error) });

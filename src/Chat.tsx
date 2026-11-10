@@ -1,3 +1,5 @@
+import { chatDrafts, useChatDraft } from "./chat-draft";
+import { arxivLink } from "../shared/import-url";
 import { subscribeLive } from "./live";
 import React, { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
@@ -27,18 +29,13 @@ export function Chat({
     error: null,
   });
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [draft, setDraftState] = useState(
-    () => sessionStorage.getItem("litanvil-agent-draft") || "",
-  );
-  const draftRef = useRef(draft);
-  function setDraft(value: string | ((previous: string) => string)) {
-    const next = typeof value === "function" ? value(draftRef.current) : value;
-    draftRef.current = next;
-    sessionStorage.setItem("litanvil-agent-draft", next);
-    setDraftState(next);
-  }
+  const {text:draft,unsent} = useChatDraft();
+  const setDraft = chatDrafts.setText;
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const requestLock = useRef<string | null>(null);
+  const stopLock = useRef(false);
+  const [stopping, setStopping] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const unsubscribe = subscribeLive("agent", setState, { onError: () => setState(s => ({ ...s, status: "connecting" })) });
@@ -55,13 +52,15 @@ export function Chat({
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [state]);
   async function action(name: string, body: any = {}) {
+    if (name === "stop" ? stopLock.current : requestLock.current) return false;
+    if (name === "stop") { stopLock.current = true; setStopping(true); }
+    else { requestLock.current = name; setPending(name); }
     setError("");
-    setPending(true);
     try {
       const r = await fetch(API + "/agent/" + name, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, expectedSessionId:state.sessionId, expectedWorkspace:state.workspace }),
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error);
@@ -70,28 +69,24 @@ export function Chat({
       setError(String(e));
       return false;
     } finally {
-      setPending(false);
+      if (name === "stop") { stopLock.current = false; setStopping(false); }
+      else { requestLock.current = null; setPending(null); }
     }
   }
+  const busy = state.status === "running";
+  const importLink = arxivLink(draft);
+  const connected = state.status !== "connecting" && Boolean(state.nativeSessionId);
+  const canSend = Boolean(draft.trim()) && !pending && !stopping && !busy && (Boolean(importLink) || connected);
   async function send() {
-    const text = draft.trim();
+    if (requestLock.current || stopLock.current || !canSend) return;
+    const text = chatDrafts.getSnapshot().text.trim();
     if (!text) return;
-    try {
-      const u = new URL(text);
-      if (
-        /^(www\.)?arxiv\.org$/.test(u.hostname) &&
-        /^\/(abs|pdf)\//.test(u.pathname)
-      ) {
-        onImport(text);
-        setDraft("");
-        return;
-      }
-    } catch {}
+    const link = arxivLink(text);
+    if (link) { onImport(link); setDraft(""); return; }
     setDraft("");
     const sent = await action("message", { text, documentId, quote });
-    if (!sent) setDraft((previous) => previous || text);
+    if (!sent) chatDrafts.failed(text);
   }
-  const busy = state.status === "running";
   const providerLabel = state.provider === "claude" ? "Claude" : "Codex";
   return (
     <section className="chat-session">
@@ -100,7 +95,7 @@ export function Chat({
           className="provider-select"
           aria-label="Agent 后端"
           value={state.provider}
-          disabled={busy || pending || state.status === "connecting"}
+          disabled={busy || Boolean(pending) || stopping || state.status === "connecting"}
           onChange={(event) =>
             action("provider", { provider: event.target.value })
           }
@@ -129,7 +124,7 @@ export function Chat({
                 : "已连接"}
         </span>
         <button
-          disabled={pending || !state.nativeSessionId}
+          disabled={Boolean(pending) || stopping || !connected}
           onClick={() => action("clear")}
         >
           清空上下文
@@ -151,6 +146,10 @@ export function Chat({
           {error || state.error}
         </div>
       )}
+      {unsent.length > 0 && <details className="session-tool failed unsent-messages">
+        <summary>未发送的消息 · {unsent.length}</summary>
+        {unsent.map((text,index)=><div key={index}><pre>{text}</pre><button onClick={()=>chatDrafts.restore(index)}>恢复到输入框</button></div>)}
+      </details>}
       <div className="composer">
         {quote && <blockquote className="chat-quote">{quote}</blockquote>}
         {children}
@@ -168,17 +167,17 @@ export function Chat({
               !e.nativeEvent.isComposing
             ) {
               e.preventDefault();
-              if (!busy && !pending) void send();
+              if (canSend) void send();
             }
           }}
         />
         <div className="session-send">
           {busy ? (
-            <button onClick={() => action("stop")}>停止</button>
+            <button disabled={stopping || Boolean(pending && pending !== "message")} onClick={() => action("stop")}>{stopping ? "停止中…" : "停止"}</button>
           ) : (
             <button
               aria-label="发送消息"
-              disabled={pending || !draft.trim() || !state.nativeSessionId}
+              disabled={!canSend}
               onClick={send}
             >
               ↑

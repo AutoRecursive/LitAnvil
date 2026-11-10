@@ -95,3 +95,15 @@ it('closes a deleted document on external changes and cannot reopen it from a la
   expect(sessionStorage.getItem('litanvil-open-document')).toBeNull();
   expect(container.querySelectorAll('.library-open')).toHaveLength(1);
 });
+it('restores the saved document when the initial library request fails and the live connection later recovers',async()=>{
+ vi.useFakeTimers();sessionStorage.setItem('litanvil-open-document','A');let offline=true;
+ const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ request.mockImplementation(async(url:string)=>{if((url.endsWith('/documents')||url.endsWith('/project'))&&offline)throw Error('offline');return result(url.endsWith('/documents')?documents:url.endsWith('/project')?{directory:'/notes'}:[])});
+ await act(async()=>root.render(<App/>));
+ expect(container.querySelector('.paper')).toBeNull();expect(container.querySelector('[role="alert"]')?.textContent).toContain('自动重试');
+ offline=false;const stream=[...streams.values()][0];
+ await act(async()=>{stream.onmessage({data:'{"type":"library","data":{"revision":1}}'});vi.advanceTimersByTime(80)});
+ expect(container.querySelector('.paper-meta h1')?.textContent).toBe('Paper A');
+ expect(container.querySelector('[role="alert"]')).toBeNull();
+ warning.mockRestore();
+});

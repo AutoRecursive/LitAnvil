@@ -95,7 +95,7 @@ export function App() {
         const doc = items.find((d) => d.id === saved);
         if (doc) setSelected(doc);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => { console.warn("[Library] initial connection failed",e); setError("暂时无法连接文档库，恢复连接后将自动重试"); });
   }, []);
   useEffect(() => {
     if (selected) sessionStorage.setItem("litanvil-open-document", selected.id);
@@ -128,7 +128,12 @@ export function App() {
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
-  useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns });
+  useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns,
+    onSynced:()=>{
+      setError(value=>value==="暂时无法连接文档库，恢复连接后将自动重试"?"":value);
+      if (!dir) void loadProject();
+    },
+  });
   useReaderBridge({
     docs,
     selected,
@@ -367,15 +372,18 @@ export function App() {
     a.click();
     URL.revokeObjectURL(a.href);
   }
-  useEffect(() => {
-    api("/project")
-      .then((result) => {
-        setDir(result.directory);
-        if (result.syncError) setError(result.syncError);
-        setProjectDraft(result.directory);
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
+  async function loadProject() {
+    try {
+      const result=await api("/project");
+      setDir(result.directory);
+      setProjectDraft(result.directory);
+      if (result.syncError || result.agentError) setError(result.syncError || result.agentError);
+    } catch (error) {
+      console.warn("[Project] initial connection failed",error);
+      setError("暂时无法连接文档库，恢复连接后将自动重试");
+    }
+  }
+  useEffect(() => { void loadProject(); }, []);
   async function chooseDir(event: React.MouseEvent<HTMLButtonElement>) {
     event.currentTarget.focus();
     setProjectDraft(dir);
@@ -391,7 +399,7 @@ export function App() {
       });
       setDir(result.directory);
       setProjectOpen(false);
-      if (result.syncError) setError(result.syncError);
+      if (result.syncError || result.agentError) setError(result.syncError || result.agentError);
     } catch (e) {
       setProjectError(String(e));
     }
