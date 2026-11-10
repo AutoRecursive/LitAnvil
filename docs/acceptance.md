@@ -48,3 +48,19 @@
 - Homepage now has accessible upload, search, separate native open/delete buttons. Real Markdown upload enters the reader with correct content; the temporary fixture and its generated files were removed.
 - Annotation fetch ignores stale document responses; clicking the current document no longer empties annotations. Save/edit failures preserve input and display a global error; failed deletion preserves library contents.
 - 18 tests pass (including stale annotations/repeated clicks/deletion failure); production build passes with the existing large-bundle advisory.
+
+## Unified agent runtime (2026-11-10)
+- Happy-inspired adapter/runtime/presentation separation implemented with a v1 common protocol. Codex native JSON-RPC and Claude official Agent SDK stay inside provider adapters; frontend renders common messages/tools/notices.
+- Workspace/provider histories, provider selection, atomic snapshot files and revisioned event journals persist under ignored data/agents. Original default-workspace Codex thread migrated and rendered with seven existing user messages.
+- Real Claude account configuration reused through an authentication-only allowlist; project settings and explicit local HTTP MCP are passed to the SDK. Browser remember/reload/recall returned 海鸥73. Switching from homepage to PDF sidebar retained the same Claude messages.
+- Real Claude MCP calls connected over HTTP and executed navigation/temporary previews. A stale state cache and first-visible-page heuristic were found during E2E; get_reader_state now obtains actual frontend acknowledgements, preview replies include matches/pages, and the most-visible page is used. Direct MCP verification returned page 2 and four cyan matches on page 2 with all 18 canvases retained.
+- Adapter/runtime tests cover streamed text/tool reconciliation, native resume/interrupt, isolated projects/providers, selection recovery, failed-provider switching, storage failures and public-summary-only projection. No live account access is used by these tests.
+- Temporary Markdown/math annotation fixture removed after confirming its source was unchanged.
+
+## Resizable panes (2026-11-10)
+- Drag separators adjust left and right sidebar widths, document/annotation split, narrow-screen PDF/chat split, header height and reader-toolbar height. Widths are bounded so the PDF retains usable space; hidden panels do not reserve width. Layout is persisted per browser.
+- Pointer capture, keyboard arrows, Home and double-click reset supported; selection/cursor state is restored after dragging or cancellation.
+- Real desktop drags: left 240→320px, right 360→460px, document share 40→29%, header 64→80px, toolbar 56→75px. Reload restored these values.
+- Real 390px viewport drags changed PDF/chat share 60→50% and drawer width 320→280px. No horizontal overflow; 18 PDF page slots retained. Double-click restored all defaults.
+- 37 tests pass, including drag bounds/keyboard/reset and current-page geometry. Production build passes with the existing large-bundle advisory.
+- Final real-agent check: Claude reported page 2 and matches=4 after navigation/preview/state tools. Switching back to Codex restored its original seven-message history; a new Codex turn recalled 蓝鲸42 rather than Claude's 海鸥73. All 18 PDF canvases remained present.

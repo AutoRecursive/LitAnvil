@@ -1,12 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import {Markdown} from "./Markdown";
+import { Markdown } from "./Markdown";
 const API = "http://localhost:8787/api";
-type Snapshot = {
-  threadId: string | null;
-  status: string;
-  items: any[];
-  error: string | null;
-};
+import type { AgentSnapshot, AgentItem, ProviderInfo } from "../shared/agent";
 export function Chat({
   documentId,
   quote,
@@ -18,19 +13,42 @@ export function Chat({
   onImport: (url: string) => void;
   children?: React.ReactNode;
 }) {
-  const [state, setState] = useState<Snapshot>({
-    threadId: null,
+  const [state, setState] = useState<AgentSnapshot>({
+    protocolVersion: 1,
+    provider: "codex",
+    sessionId: "connecting",
+    workspace: "",
+    revision: 0,
+    turnId: null,
+    nativeSessionId: null,
     status: "connecting",
     items: [],
     error: null,
   });
-  const [draft, setDraft] = useState("");
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [draft, setDraftState] = useState(
+    () => sessionStorage.getItem("litanvil-agent-draft") || "",
+  );
+  const draftRef = useRef(draft);
+  function setDraft(value: string | ((previous: string) => string)) {
+    const next = typeof value === "function" ? value(draftRef.current) : value;
+    draftRef.current = next;
+    sessionStorage.setItem("litanvil-agent-draft", next);
+    setDraftState(next);
+  }
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const stream = new EventSource(API + "/session/events");
+    const stream = new EventSource(API + "/agent/events");
     stream.onmessage = (e) => setState(JSON.parse(e.data));
+    fetch(API + "/agent/providers")
+      .then((response) => {
+        if (!response.ok) throw new Error("无法读取 Agent 后端");
+        return response.json();
+      })
+      .then(setProviders)
+      .catch((error) => setError(String(error)));
     stream.onerror = () => setState((s) => ({ ...s, status: "connecting" }));
     return () => stream.close();
   }, []);
@@ -41,7 +59,7 @@ export function Chat({
     setError("");
     setPending(true);
     try {
-      const r = await fetch(API + "/session/" + name, {
+      const r = await fetch(API + "/agent/" + name, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -75,10 +93,33 @@ export function Chat({
     if (!sent) setDraft((previous) => previous || text);
   }
   const busy = state.status === "running";
+  const providerLabel = state.provider === "claude" ? "Claude" : "Codex";
   return (
     <section className="chat-session">
       <div className="session-toolbar">
-        <b>Codex</b>
+        <select
+          className="provider-select"
+          aria-label="Agent 后端"
+          value={state.provider}
+          disabled={busy || pending || state.status === "connecting"}
+          onChange={(event) =>
+            action("provider", { provider: event.target.value })
+          }
+        >
+          {(providers.length
+            ? providers
+            : [{ id: state.provider, label: providerLabel, available: true }]
+          ).map((provider) => (
+            <option
+              key={provider.id}
+              value={provider.id}
+              disabled={!provider.available}
+            >
+              {provider.label}
+              {!provider.available ? "（未安装）" : ""}
+            </option>
+          ))}
+        </select>
         <span className="session-state">
           {busy
             ? "生成中"
@@ -89,7 +130,7 @@ export function Chat({
                 : "已连接"}
         </span>
         <button
-          disabled={pending || !state.threadId}
+          disabled={pending || !state.nativeSessionId}
           onClick={() => action("clear")}
         >
           清空上下文
@@ -102,7 +143,9 @@ export function Chat({
         {state.items.map((item) => (
           <SessionItem key={item.id} item={item} />
         ))}
-        {busy && <div className="session-progress">Codex 正在处理…</div>}
+        {busy && (
+          <div className="session-progress">{providerLabel} 正在处理…</div>
+        )}
       </div>
       {(error || state.error) && (
         <div className="session-error" role="alert">
@@ -136,7 +179,7 @@ export function Chat({
           ) : (
             <button
               aria-label="发送消息"
-              disabled={pending || !draft.trim() || !state.threadId}
+              disabled={pending || !draft.trim() || !state.nativeSessionId}
               onClick={send}
             >
               ↑
@@ -148,63 +191,53 @@ export function Chat({
   );
 }
 
-export function SessionItem({ item }: { item: any }) {
-  if (item.type === "userMessage")
-    return (
-      <div className="session-user">
-        {item.content
-          ?.filter(
-            (c: any) =>
-              c.type === "text" && !c.text.startsWith("Reference document"),
-          )
-          .map((c: any) => c.text)
-          .join("\n")}
-      </div>
-    );
-  if (item.type === "agentMessage")
-    return (
+export function SessionItem({ item }: { item: AgentItem }) {
+  if (item.type === "message")
+    return item.role === "user" ? (
+      <div className="session-user">{item.text}</div>
+    ) : (
       <div className="session-answer">
-        <Markdown>{item.text || ""}</Markdown>
+        <Markdown>{item.text}</Markdown>
       </div>
     );
-  if (item.type === "reasoning") {
-    const summary = item.summary?.join("\n");
-    return summary ? (
+  if (item.type === "reasoning")
+    return item.text ? (
       <details className="session-tool summary">
         <summary>过程摘要</summary>
-        <Markdown>{summary}</Markdown>
+        <Markdown>{item.text}</Markdown>
       </details>
     ) : null;
-  }
+  if (item.type === "notice")
+    return (
+      <div
+        className={
+          item.level === "error" ? "session-error" : "session-progress"
+        }
+      >
+        {item.text}
+      </div>
+    );
+  const format = (value: unknown) =>
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
     <details
       className={`session-tool ${item.status === "failed" ? "failed" : ""}`}
     >
       <summary>
-        {item.type === "commandExecution"
-          ? "命令"
-          : item.type === "mcpToolCall"
-            ? `${item.server} · ${item.tool}`
-            : item.type === "fileChange"
-              ? "文件变更"
-              : item.type === "webSearch"
-                ? "搜索"
-                : item.type}
+        {item.name}
         <span>
-          {item.status === "inProgress"
+          {item.status === "running"
             ? "运行中"
             : item.status === "failed"
               ? "失败"
-              : "完成"}
+              : item.status === "interrupted"
+                ? "已停止"
+                : "完成"}
         </span>
       </summary>
-      <pre>
-        {item.command ||
-          JSON.stringify(item.arguments || item.changes || {}, null, 2)}
-      </pre>
-      {item.aggregatedOutput && <pre>{item.aggregatedOutput}</pre>}
-      {item.error && <pre>{item.error.message}</pre>}
-      {item.result && <pre>{JSON.stringify(item.result, null, 2)}</pre>}
+      {item.input !== undefined && <pre>{format(item.input)}</pre>}
+      {item.output !== undefined && <pre>{format(item.output)}</pre>}
+      {item.error && <pre>{item.error}</pre>}
     </details>
   );
 }

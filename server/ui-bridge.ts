@@ -53,6 +53,18 @@ export class ReaderBridge {
       ...client.state,
     }));
   }
+  async readStates() {
+    const states = await Promise.allSettled(
+      this.snapshots().map((tab) =>
+        this.command("get_state", { clientId: tab.clientId }),
+      ),
+    );
+    return states.flatMap((state) =>
+      state.status === "fulfilled" && state.value.ok
+        ? [{ clientId: state.value.clientId, ...state.value.state }]
+        : [],
+    );
+  }
   async command(action: string, args: Record<string, any> = {}) {
     const candidates = [...this.clients].filter(
       ([clientId]) => !args.clientId || clientId === args.clientId,

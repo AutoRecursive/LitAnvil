@@ -1,4 +1,6 @@
-import {Markdown} from "./Markdown";
+import { ResizeHandle } from "./ResizeHandle";
+import { usePaneLayout } from "./usePaneLayout";
+import { Markdown } from "./Markdown";
 import { Chat } from "./Chat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useReaderBridge } from "./useReaderBridge";
@@ -49,6 +51,9 @@ async function api(path: string, init?: RequestInit) {
   return r.json();
 }
 export function App() {
+  const sidebarSections = useRef<HTMLDivElement>(null);
+  const readerLayout = useRef<HTMLDivElement>(null);
+  const readerToolbar = useRef<HTMLDivElement>(null);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [error, setError] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -63,6 +68,7 @@ export function App() {
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 900);
   const [documentsOpen, setDocumentsOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const panes = usePaneLayout(leftOpen, rightOpen);
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState("");
   const [selectionLocation, setSelectionLocation] = useState("");
@@ -405,7 +411,7 @@ export function App() {
     }
   }
   return (
-    <div className={dark ? "app dark" : "app"}>
+    <div className={dark ? "app dark" : "app"} style={panes.style}>
       {projectOpen && (
         <div className="modal-backdrop">
           <section
@@ -456,6 +462,16 @@ export function App() {
             {dark ? "☀" : "◐"}
           </button>
         </div>
+        <ResizeHandle
+          className="header-resize"
+          orientation="horizontal"
+          label="顶部栏高度"
+          value={panes.layout.headerHeight}
+          min={48}
+          max={96}
+          defaultValue={64}
+          onChange={(value) => panes.set("headerHeight", value)}
+        />
       </header>
       <div className={`layout ${selected ? "reader-shell" : "home-shell"}`}>
         {selected && leftOpen && (
@@ -540,90 +556,134 @@ export function App() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <nav className="document-nav">
-            <button
-              aria-expanded={documentsOpen}
-              className="document-toggle"
-              onClick={() => setDocumentsOpen((open) => !open)}
-            >
-              <span>{documentsOpen ? "▾" : "▸"} 全部文档</span>
-              <em>{docs.length}</em>
-            </button>
+          <div className="sidebar-sections" ref={sidebarSections}>
+            <nav className="document-nav">
+              <button
+                aria-expanded={documentsOpen}
+                className="document-toggle"
+                onClick={() => setDocumentsOpen((open) => !open)}
+              >
+                <span>{documentsOpen ? "▾" : "▸"} 全部文档</span>
+                <em>{docs.length}</em>
+              </button>
+              {documentsOpen && (
+                <div className="sidebar-documents">
+                  {filtered.map((d) => (
+                    <button
+                      key={d.id}
+                      title={d.title}
+                      className={selected?.id === d.id ? "active" : ""}
+                      onClick={() => openDocument(d)}
+                    >
+                      {d.title}
+                    </button>
+                  ))}
+                  {filtered.length === 0 && (
+                    <p className="sidebar-empty">暂无文档</p>
+                  )}
+                </div>
+              )}
+            </nav>
             {documentsOpen && (
-              <div className="sidebar-documents">
-                {filtered.map((d) => (
-                  <button
-                    key={d.id}
-                    title={d.title}
-                    className={selected?.id === d.id ? "active" : ""}
-                    onClick={() => openDocument(d)}
-                  >
-                    {d.title}
-                  </button>
-                ))}
-                {filtered.length === 0 && (
-                  <p className="sidebar-empty">暂无文档</p>
-                )}
-              </div>
+              <ResizeHandle
+                orientation="horizontal"
+                label="文档与批注分区"
+                value={panes.layout.documentShare}
+                min={15}
+                max={80}
+                defaultValue={40}
+                step={2}
+                pixelsPerUnit={() =>
+                  Math.max(
+                    1,
+                    (sidebarSections.current?.clientHeight || 100) / 100,
+                  )
+                }
+                onChange={(value) => panes.set("documentShare", value)}
+              />
             )}
-          </nav>
-          <div className="ann-list">
-            <div className="ann-head">
-              本篇批注 <span>{anns.length}</span>
-            </div>
-            {anns.map((a) => (
-              <div className="ann" key={a.id}>
-                <blockquote
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => jumpToAnnotation(a)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") jumpToAnnotation(a);
-                  }}
-                  title="跳转到批注位置"
-                >
-                  {a.quote || "高亮"}
-                </blockquote>
-                {editingAnn === a.id ? (
-                  <>
-                    <textarea
-                      className="ann-editor"
-                      value={editNote}
-                      onChange={(e) => setEditNote(e.target.value)}
-                    />
-                    <div className="ann-actions">
-                      <button
-                        disabled={annotationPending}
-                        onClick={() => updateAnnotation(a.id)}
-                      >
-                        保存
-                      </button>
-                      <button onClick={() => setEditingAnn(null)}>取消</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <Markdown className="annotation-content">{a.note || a.aiAnswer || "高亮"}</Markdown>
-                    <button
-                      className="ann-delete"
-                      onClick={() => deleteAnnotation(a.id)}
-                    >
-                      删除
-                    </button>
-                    <button
-                      className="ann-edit"
-                      onClick={() => {
-                        setEditingAnn(a.id);
-                        setEditNote(a.note || "");
-                      }}
-                    >
-                      编辑
-                    </button>
-                  </>
-                )}
+            <div className="ann-list">
+              <div className="ann-head">
+                本篇批注 <span>{anns.length}</span>
               </div>
-            ))}
+              {anns.map((a) => (
+                <div className="ann" key={a.id}>
+                  <blockquote
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => jumpToAnnotation(a)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") jumpToAnnotation(a);
+                    }}
+                    title="跳转到批注位置"
+                  >
+                    {a.quote || "高亮"}
+                  </blockquote>
+                  {editingAnn === a.id ? (
+                    <>
+                      <textarea
+                        className="ann-editor"
+                        value={editNote}
+                        onChange={(e) => setEditNote(e.target.value)}
+                      />
+                      <div className="ann-actions">
+                        <button
+                          disabled={annotationPending}
+                          onClick={() => updateAnnotation(a.id)}
+                        >
+                          保存
+                        </button>
+                        <button onClick={() => setEditingAnn(null)}>
+                          取消
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Markdown className="annotation-content">
+                        {a.note || a.aiAnswer || "高亮"}
+                      </Markdown>
+                      <button
+                        className="ann-delete"
+                        onClick={() => deleteAnnotation(a.id)}
+                      >
+                        删除
+                      </button>
+                      <button
+                        className="ann-edit"
+                        onClick={() => {
+                          setEditingAnn(a.id);
+                          setEditNote(a.note || "");
+                        }}
+                      >
+                        编辑
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
+          <ResizeHandle
+            className="sidebar-width-resize"
+            orientation="vertical"
+            label="左侧栏宽度"
+            value={panes.leftWidth}
+            min={180}
+            max={
+              panes.narrow
+                ? Math.min(500, panes.width * 0.85)
+                : Math.max(
+                    180,
+                    Math.min(
+                      500,
+                      panes.width - (rightOpen ? panes.rightWidth : 0) - 268,
+                    ),
+                  )
+            }
+            defaultValue={240}
+            onChange={(value) => panes.set("leftWidth", value)}
+          />
         </aside>
         <main>
           {!selected ? (
@@ -695,7 +755,7 @@ export function App() {
             </>
           ) : (
             <>
-              <div className="reader-top">
+              <div className="reader-top" ref={readerToolbar}>
                 <button className="back" onClick={() => closeDocument()}>
                   ← 文档库
                 </button>
@@ -744,8 +804,22 @@ export function App() {
                   <button onClick={exportMd}>↓ Markdown</button>
                   <button onClick={exportJson}>JSON</button>
                 </div>
+                <ResizeHandle
+                  className="toolbar-resize"
+                  orientation="horizontal"
+                  label="阅读工具栏高度"
+                  value={panes.layout.toolbarHeight}
+                  startValue={() =>
+                    readerToolbar.current?.clientHeight ||
+                    panes.layout.toolbarHeight
+                  }
+                  min={56}
+                  max={140}
+                  defaultValue={56}
+                  onChange={(value) => panes.set("toolbarHeight", value)}
+                />
               </div>
-              <div className="reader-layout">
+              <div className="reader-layout" ref={readerLayout}>
                 <article
                   className="paper"
                   data-document-id={selected.id}
@@ -809,6 +883,49 @@ export function App() {
                     </div>
                   )}
                 </article>
+                {rightOpen && (
+                  <ResizeHandle
+                    className="reader-agent-resize"
+                    orientation={panes.narrow ? "horizontal" : "vertical"}
+                    label={
+                      panes.narrow ? "PDF 与 Agent 上下分区" : "右侧栏宽度"
+                    }
+                    value={
+                      panes.narrow ? panes.layout.readerShare : panes.rightWidth
+                    }
+                    min={panes.narrow ? 25 : 260}
+                    max={
+                      panes.narrow
+                        ? 80
+                        : Math.max(
+                            260,
+                            Math.min(
+                              700,
+                              panes.width -
+                                (leftOpen ? panes.leftWidth : 0) -
+                                268,
+                            ),
+                          )
+                    }
+                    defaultValue={panes.narrow ? 60 : 360}
+                    direction={panes.narrow ? 1 : -1}
+                    step={panes.narrow ? 2 : 10}
+                    pixelsPerUnit={() =>
+                      panes.narrow
+                        ? Math.max(
+                            1,
+                            (readerLayout.current?.clientHeight || 100) / 100,
+                          )
+                        : 1
+                    }
+                    onChange={(value) =>
+                      panes.set(
+                        panes.narrow ? "readerShare" : "rightWidth",
+                        value,
+                      )
+                    }
+                  />
+                )}
                 <section className={`ai-panel ${rightOpen ? "" : "collapsed"}`}>
                   <Chat
                     documentId={selected.id}

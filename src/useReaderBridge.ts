@@ -1,3 +1,4 @@
+import { currentPdfPage, scrollReaderTo } from "./reader-position";
 import {
   useEffect,
   useRef,
@@ -41,10 +42,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
       const pages = [
         ...(reader?.querySelectorAll<HTMLElement>(".pdf-page") || []),
       ];
-      const top = reader?.getBoundingClientRect().top || 0;
-      const page = pages.find(
-        (page) => page.getBoundingClientRect().bottom > top,
-      );
+      const page = currentPdfPage(reader);
       return {
         documentId: state.selected?.id || null,
         title: state.selected?.title || null,
@@ -116,6 +114,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
       const command = JSON.parse(event.data);
       if (command.clientId !== clientId) return;
       let result: Record<string, any>;
+      let details: Record<string, unknown> = {};
       try {
         const state = current.current;
         switch (command.action) {
@@ -137,7 +136,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
               `.pdf-page[data-page="${command.page}"]`,
             );
             if (!page) throw new Error("该文档不支持 PDF 页码");
-            page.scrollIntoView({ block: "start" });
+            scrollReaderTo(state.reader.current!, page);
             break;
           }
           case "set_zoom": {
@@ -219,13 +218,26 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
                 page.append(mark);
               }
             }
-            matched[0].scrollIntoView({ block: "center" });
+            scrollReaderTo(state.reader.current!, matched[0], true);
+            details = {
+              matches: matched.length,
+              color: command.color || "cyan",
+              pages: [
+                ...new Set(
+                  matched.map((span) =>
+                    Number(
+                      span.closest<HTMLElement>(".pdf-page")?.dataset.page,
+                    ),
+                  ),
+                ),
+              ],
+            };
             break;
           }
           default:
             throw new Error("未知界面操作");
         }
-        result = { ok: true, state: snapshot() };
+        result = { ok: true, ...details, state: snapshot() };
       } catch (error) {
         result = { ok: false, error: String(error) };
       }
