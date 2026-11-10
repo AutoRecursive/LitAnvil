@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { findPdfText, pdfSelectionLocation, rectsFromTextRanges, paintPdfPreview, repaintPdfPreviews } from '../src/pdf-text';
+import { findPdfText, pdfSelectionLocation, rectsFromTextRanges, paintPdfPreview, repaintPdfPreviews, finishPdfTextSelection } from '../src/pdf-text';
 let reader: HTMLElement;
 function box(left: number, top: number, width: number, height: number) {
   return {left,top,right:left+width,bottom:top+height,width,height} as DOMRect;
@@ -21,7 +21,7 @@ beforeEach(() => {
     return [box(rect.left+this.startOffset*5,rect.top,(this.endOffset-this.startOffset)*5,10)];
   }});
 });
-afterEach(() => { reader.remove(); delete (Range.prototype as any).getClientRects; vi.restoreAllMocks(); });
+afterEach(() => { window.getSelection()?.removeAllRanges(); reader.remove(); delete (Range.prototype as any).getClientRects; vi.restoreAllMocks(); });
 it('matches across text spans and multiple lines without highlighting their whole bounding boxes', () => {
   page(1,[{text:'The Trans',x:120,y:220},{text:'former connects',x:165,y:220},{text:'input and output.',x:120,y:240}]);
   const found=findPdfText(reader,'Transformer connects input and output');
@@ -93,4 +93,22 @@ it('uses no stale glyph geometry while a page is rerendering and tolerates missi
   expect(rectsFromTextRanges(reader,undefined as any)).toEqual([]);
   document.dataset.ready='true';
   expect(rectsFromTextRanges(reader,[{page:1,node:99,start:0,end:2}])).toEqual([]);
+});
+it('finishes a whitespace drag at the text line edge instead of an unrelated following author block',()=>{
+ const document=page(1,[{text:'Paper title',x:120,y:220},{text:'Unrelated authors',x:100,y:260}]);
+ const nodes=document.querySelectorAll('span');const selection=window.getSelection()!;
+ selection.setBaseAndExtent(nodes[0].firstChild!,0,nodes[1].firstChild!,5);
+ finishPdfTextSelection(reader,document.querySelector('.textLayer'),200,225);
+ expect(selection.toString()).toBe('Paper title');
+ expect(pdfSelectionLocation(reader,selection.getRangeAt(0)).textRanges).toEqual([{page:1,node:0,start:0,end:11}]);
+});
+it('preserves reverse selections and leaves real text targets and paragraph gaps to the browser',()=>{
+ const document=page(1,[{text:'Paper title',x:120,y:220},{text:'Authors',x:100,y:260}]);
+ const title=document.querySelector('span')!;const selection=window.getSelection()!;
+ selection.setBaseAndExtent(title.firstChild!,11,title.firstChild!,3);
+ finishPdfTextSelection(reader,document.querySelector('.textLayer'),110,225);
+ expect(selection.toString()).toBe('Paper title');expect(selection.anchorOffset).toBe(11);
+ selection.setBaseAndExtent(title.firstChild!,0,title.firstChild!,5);
+ finishPdfTextSelection(reader,title,200,225);expect(selection.toString()).toBe('Paper');
+ finishPdfTextSelection(reader,document.querySelector('.textLayer'),200,245);expect(selection.toString()).toBe('Paper');
 });

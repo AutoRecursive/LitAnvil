@@ -73,6 +73,9 @@ export function App() {
   const [note, setNote] = useState("");
   const [editingAnn, setEditingAnn] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
+  const annotationInput = useRef<HTMLTextAreaElement>(null);
+  const editingAnnotation = anns.find(annotation => annotation.id === editingAnn);
+  useEffect(() => { if (editingAnn) annotationInput.current?.focus({preventScroll:true}); }, [editingAnn]);
   const [annotationPending, setAnnotationPending] = useState(false);
   const [dir, setDir] = useState("");
   const [trashOpen, setTrashOpen] = useState(false);
@@ -287,11 +290,13 @@ export function App() {
     }
   }
   function capture() {
+    if (annotationPending) return;
     const sel = window.getSelection();
     if (!sel?.rangeCount || !reader.current?.contains(sel.anchorNode)) return;
     const text = sel.toString().trim();
     if (!text) return;
     const range = sel.getRangeAt(0);
+    setEditingAnn(null);
     setSelection(text);
     setSelectionLocation(JSON.stringify(pdfSelectionLocation(reader.current, range)));
     setNote("");
@@ -648,47 +653,31 @@ export function App() {
                   >
                     {a.quote || "高亮"}
                   </blockquote>
-                  {editingAnn === a.id ? (
-                    <>
-                      <textarea
-                        className="ann-editor"
-                        value={editNote}
-                        onChange={(e) => setEditNote(e.target.value)}
-                      />
-                      <div className="ann-actions">
-                        <button
-                          disabled={annotationPending}
-                          onClick={() => updateAnnotation(a.id)}
-                        >
-                          保存
-                        </button>
-                        <button onClick={() => setEditingAnn(null)}>
-                          取消
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <Markdown className="annotation-content">
-                        {a.note || a.aiAnswer || "高亮"}
-                      </Markdown>
-                      <button
-                        className="ann-delete"
-                        onClick={() => deleteAnnotation(a.id)}
-                      >
-                        删除
-                      </button>
-                      <button
-                        className="ann-edit"
-                        onClick={() => {
-                          setEditingAnn(a.id);
-                          setEditNote(a.note || "");
-                        }}
-                      >
-                        编辑
-                      </button>
-                    </>
-                  )}
+                  <Markdown className="annotation-content">
+                    {a.note || a.aiAnswer || "高亮"}
+                  </Markdown>
+                  <button
+                    className="ann-delete"
+                    disabled={annotationPending}
+                    onClick={() => deleteAnnotation(a.id)}
+                  >
+                    删除
+                  </button>
+                  <button
+                    className="ann-edit"
+                    disabled={annotationPending}
+                    onClick={() => {
+                      window.getSelection()?.removeAllRanges();
+                      setSelection("");
+                      setSelectionLocation("");
+                      setEditingAnn(a.id);
+                      setEditNote(a.note || "");
+                      setRightOpen(true);
+                      if (panes.narrow) setLeftOpen(false);
+                    }}
+                  >
+                    编辑
+                  </button>
                 </div>
               ))}
             </div>
@@ -979,25 +968,29 @@ export function App() {
                     composerHeight={panes.layout.composerHeight}
                     onComposerResize={(height)=>panes.set("composerHeight",height)}
                     documentId={selected.id}
-                    quote={selection}
+                    quote={editingAnnotation?.quote || selection}
                     onImport={importUrl}
                   >
-                    {selection && (
+                    {(selection || editingAnnotation) && (
                       <div className="selection-actions">
                         <textarea
+                          ref={annotationInput}
                           aria-label="批注内容"
                           placeholder="添加评论（留空即为高亮）"
-                          value={note}
-                          onChange={(e) => setNote(e.target.value)}
+                          value={editingAnnotation ? editNote : note}
+                          onChange={(e) => editingAnnotation ? setEditNote(e.target.value) : setNote(e.target.value)}
                         />
                         <button
                           disabled={annotationPending}
-                          onClick={() => saveAnnotation(note)}
+                          onClick={() => editingAnnotation ? updateAnnotation(editingAnnotation.id) : saveAnnotation(note)}
                         >
-                          {note.trim() ? "保存批注" : "保存高亮"}
+                          {editingAnnotation ? "保存修改" : note.trim() ? "保存批注" : "保存高亮"}
                         </button>
                         <button
+                          disabled={annotationPending}
                           onClick={() => {
+                            setEditingAnn(null);
+                            window.getSelection()?.removeAllRanges();
                             setSelection("");
                             setSelectionLocation("");
                             setNote("");

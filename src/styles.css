@@ -98,7 +98,6 @@ main { min-width: 0; }
 .annotation-content { margin: 8px 0; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
 .ann .annotation-content p { font-size: inherit; line-height: inherit; white-space: normal; margin: 0 0 .65em; }
 .ann .annotation-content > :last-child { margin-bottom: 0; }
-.ann-editor { font-size: 14px; line-height: 1.75; }
 .markdown-content .katex { font-size: 1em; }
 .markdown-content .katex-display { overflow-x: auto; overflow-y: hidden; padding: 3px 0; margin: .8em 0; }
 .markdown-content pre { overflow: auto; padding: 10px; border-radius: 8px; background: var(--hover); }
@@ -110,10 +109,8 @@ main { min-width: 0; }
 .markdown-content blockquote { margin: .7em 0; border-left: 2px solid var(--border); padding-left: 10px; }
 .markdown-content table { display: block; overflow-x: auto; border-collapse: collapse; font-size: .95em; }
 .markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 5px 8px; }
-.ann-edit, .ann-delete, .ann-actions button { border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 11px; padding: 4px; }
+.ann-edit, .ann-delete { border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 11px; padding: 4px; }
 .ann-delete { float: right; }
-.ann-actions { display: flex; gap: 8px; }
-.ann-editor { width: 100%; min-height: 70px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--bg); color: inherit; resize: vertical; }
 .reader-top { position:relative; flex-shrink: 0; min-height: var(--toolbar-height,56px); display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
 .reader-top button { white-space: nowrap; font-size: 12px; }
 .reader-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -134,10 +131,13 @@ main { min-width: 0; }
 .pdf-page { position: relative; flex-shrink: 0; max-width: none; margin: 0 auto 14px; overflow: hidden; background: #fff; border-radius: 3px; box-shadow: 0 1px 6px #0001; color-scheme: light; }
 .pdf-page canvas { display: block; width: 100%; height: 100%; }
 .pdf-page .textLayer { position: absolute; inset: 0; overflow: hidden; opacity: 1; line-height: 1; transform-origin: top left; letter-spacing: normal; word-spacing: normal; text-align: initial; text-size-adjust: none; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
-.pdf-page .textLayer span { position: absolute; color: transparent; white-space: pre; transform-origin: 0 0; cursor: text; }
+.pdf-page .textLayer :is(span, br) { position: absolute; color: transparent; white-space: pre; transform-origin: 0 0; cursor: text; user-select: text; }
 .pdf-page .textLayer > :not(.markedContent), .pdf-page .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
 .pdf-page .textLayer .markedContent { display: contents; }
 .pdf-page .textLayer ::selection { background: #06b6d455; }
+.pdf-page .textLayer br::selection { background: transparent; }
+.pdf-page .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.pdf-page .textLayer.selecting .endOfContent { top: 0; }
 .saved-highlight { position: absolute; background: #ffd14952; mix-blend-mode: multiply; pointer-events: none; z-index: 2; border-radius: 2px; }
 .agent-preview { position: absolute; pointer-events: none; z-index: 3; mix-blend-mode: multiply; border-radius: 2px; outline: 1px solid #06b6d433; }
 .pdf-error { padding: 20px; background: var(--error-bg); color: var(--error); border-radius: 10px; font-size: 13px; }

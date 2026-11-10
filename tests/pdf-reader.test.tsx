@@ -22,6 +22,16 @@ vi.mock('pdfjs-dist', () => ({
     cancel() {}
   },
 }));
+vi.mock('pdfjs-dist/web/pdf_viewer.mjs', async () => {
+  const {TextLayer}=await import('pdfjs-dist');
+  return {TextLayerBuilder:class {
+    div=document.createElement('div');
+    private layer:InstanceType<typeof TextLayer>;
+    constructor(){this.div.className='textLayer';this.layer=new TextLayer({container:this.div} as any)}
+    async render(){await this.layer.render()}
+    cancel(){this.layer.cancel();this.div.replaceChildren()}
+  }};
+});
 import {PdfReader} from '../src/PdfReader';
 
 let root: Root;

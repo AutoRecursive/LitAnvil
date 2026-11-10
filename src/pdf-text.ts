@@ -40,6 +40,30 @@ function segmentsToRects(page: HTMLElement, segments: Position[]) {
   return rects;
 }
 
+/** Positioned PDF spans have no useful caret in their surrounding whitespace. */
+export function finishPdfTextSelection(root: HTMLElement, target: EventTarget | null, x: number, y: number) {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !root.contains(selection.anchorNode)) return;
+  const element = target instanceof Element ? target : null;
+  const layer = element?.closest<HTMLElement>('.textLayer');
+  if (!layer || !root.contains(layer) || element?.closest('span')) return;
+  const page = layer.closest<HTMLElement>('.pdf-page');
+  if (!page) return;
+  const distance = (box: DOMRect) => Math.hypot(Math.max(box.left-x,0,x-box.right), Math.max(box.top-y,0,y-box.bottom));
+  const nodes = textNodes(page);
+  const nearest = nodes.reduce<Text | undefined>((best,node) => {
+    if (!best) return node;
+    return distance(node.parentElement!.getBoundingClientRect()) < distance(best.parentElement!.getBoundingClientRect()) ? node : best;
+  }, undefined);
+  if (!nearest) return;
+  const box = nearest.parentElement!.getBoundingClientRect();
+  // Only correct whitespace beside a line. Do not pull selections across paragraph/page gaps.
+  if (y < box.top || y > box.bottom) return;
+  const rtl = getComputedStyle(nearest.parentElement!).direction === 'rtl';
+  const offset = x <= box.left ? (rtl ? nearest.length : 0) : x >= box.right ? (rtl ? 0 : nearest.length) : undefined;
+  if (offset !== undefined) selection.extend(nearest, offset);
+}
+
 /** Map normalized search offsets back to original text nodes, including split words and ligatures. */
 export function findPdfText(reader: HTMLElement, query: string, pageNumber?: number): PdfTextMatch[] {
   const needle = normalize(query.replace(/[-‐]\s*\n\s*/gu, ''));

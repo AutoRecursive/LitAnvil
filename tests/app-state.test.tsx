@@ -136,3 +136,26 @@ it('cancels a delayed reader command before allowing the next command and never 
  await act(async()=>send({kind:'command',id:'expired',action:'download_annotations',format:'json',expiresAt:Date.now()-1}));
  expect(request.mock.calls.some(([url])=>url.includes('/export.'))).toBe(false);
 });
+it('edits existing annotations in the shared right composer, retains failed edits and allows converting to a highlight',async()=>{
+ sessionStorage.setItem('litanvil-open-document','A');let fail=true;
+ const annotation={id:'ann',quote:'Evidence',note:'Original comment',location:'{}'};
+ request.mockImplementation(async(url:string,init?:RequestInit)=>{
+  if(init?.method==='PATCH')return fail?result({error:'Cannot save'},false):result({...annotation,note:JSON.parse(String(init.body)).note});
+  return result(url.endsWith('/documents')?documents:url.endsWith('/annotations')?[annotation]:{directory:'/notes'});
+ });
+ await act(async()=>root.render(<App/>));
+ await act(async()=>Array.from(container.querySelectorAll('button')).find(button=>button.textContent==='收起 Agent')!.click());
+ await act(async()=>container.querySelector<HTMLButtonElement>('.ann-edit')!.click());
+ const input=container.querySelector<HTMLTextAreaElement>('.ai-panel [aria-label="批注内容"]')!;
+ expect(input.value).toBe('Original comment');expect(container.querySelector('.ann-list textarea')).toBeNull();
+ expect(container.querySelector('.ai-panel')?.classList.contains('collapsed')).toBe(false);
+ const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!;
+ await act(async()=>{set.call(input,'Revised **comment**');input.dispatchEvent(new Event('input',{bubbles:true}))});
+ const save=()=>Array.from(container.querySelectorAll('button')).find(button=>button.textContent==='保存修改')!;
+ await act(async()=>save().click());expect(input.value).toBe('Revised **comment**');expect(container.querySelector('[role="alert"]')?.textContent).toContain('Cannot save');
+ fail=false;await act(async()=>{set.call(input,'');input.dispatchEvent(new Event('input',{bubbles:true}))});
+ await act(async()=>save().click());expect(container.querySelector('[aria-label="批注内容"]')).toBeNull();
+ expect(container.querySelector('.ann-list')?.textContent).toContain('高亮');
+ const updates=request.mock.calls.filter(([,init])=>init?.method==='PATCH');
+ expect(updates.at(-1)?.[0]).toContain('/annotations/ann');expect(JSON.parse(updates.at(-1)?.[1].body)).toEqual({note:''});
+});

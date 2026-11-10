@@ -11,11 +11,10 @@
 - Build passes; tests/session.test.ts passes (stream projection and stale-thread isolation).
 
 ## Remaining verification / implementation
-- Further concurrent multi-tab action checks; real native stop/clear/reconnect and live library synchronization are verified below.
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - User-level Codex configuration isolation is verified below; system/organization policy remains applicable.
-- Further manual text-selection checks beyond the existing PDF fixtures; multiline agent preview and manual page navigation are verified below.
-- Finish remaining manual PDF selection cases. Single-tab reader-command queues and cancellation are verified below; further concurrent multi-tab checks remain. Native stop/clear/reconnect, layout/export controls, document/annotation MCP operations and cross-tab updates are verified below.
+- Real title/body selection, save/edit/delete, zoom/reload alignment and simultaneous two-tab page controls are verified below. Broader PDF formats and touch/keyboard selection remain outside these manual checks.
+- Audit in-flight library writes during shutdown, local API origin access and long-document performance.
 - Final runtime launch audit and completion of the remaining interaction checks.
 
 ## Additional evidence
@@ -140,3 +139,12 @@
 - Regression fixtures simulate truncated journals, broken snapshots, stale native transcripts, delayed final adapter output and shutdown during workspace lookup. No account/model access is used by these tests.
 - Real API restarted twice with unchanged original native Codex session and all 32 projected items. Updated SIGTERM handling logged the final saved-session confirmation and exited with code 0; the next launch returned the identical transcript. No original conversation or annotation was cleared.
 - 106 tests pass across 26 files; production build passes with the existing bundle-size advisory. Further manual PDF-selection cases and the remaining completion audit are still outstanding.
+
+## Manual PDF selection and unified annotation editing (2026-11-10)
+- Real pointer selection reproduced a title-edge bug: dragging beyond the final glyph included unrelated author blocks. PDF rendering now uses the installed PDF.js TextLayerBuilder for selection boundary handling, alongside the required span/line-break/end-marker styles. Existing text normalization is explicitly preserved to keep saved version-2 offsets compatible.
+- On mouse release in whitespace beside a text line, the focus endpoint snaps to that line's text edge. Direct text targets, paragraph gaps and reverse selection are covered separately; normal browser selection is preserved elsewhere. Cancel clears the visible native selection.
+- New and existing annotations share the right-hand composer. Editing opens Agent and, on narrow screens, dismisses the directory drawer; the left list retains Markdown/math display, jump, edit and delete. Failed edits retain their draft; clearing a comment converts the same annotation into a highlight. Pending saves prevent conflicting edit/cancel/selection changes.
+- Real title and two-line abstract selections were saved, edited and recovered after reload. Three saved highlight rectangles matched their exact text-node ranges at 75%, 100% and 150% zoom; maximum observed edge error was 0.016 CSS px. Markdown bold and inline math rendered in the annotation list. Evidence: /tmp/litanvil-manual-selection-alignment.png.
+- A second real tab received edited annotations and deletions live without losing its PDF. Concurrent client-targeted page requests left one tab on page 2 and the other on page 3; both retained the same document and annotations. Clicking a saved quote returned from page 2 to page 1.
+- Both newly created acceptance annotations were deleted through the UI. Their exact, verified soft-deleted fixture records were then removed while the server was stopped; original data was backed up first. The library returned to its original two live documents and one original live annotation. The extra tab was closed, and the original Attention/page-1/100% reading view was restored.
+- 109 tests pass across 26 files, including whitespace/reverse selection boundaries, right-side editing, failed-save draft retention and highlight conversion. Production build passes with the existing bundle-size advisory. Further work is paused at the user's request; this record does not claim full completion of the remaining audit.
