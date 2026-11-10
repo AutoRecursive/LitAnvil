@@ -13,10 +13,10 @@
 ## Remaining verification / implementation
 - Real browser stop/clear/reconnect and multiple-tab synchronization (transport tests cover stop/clear/resume; real restart/resume already verified).
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
-- Global plugins/MCP currently inherited; restrict to intended project config without changing global config.
+- User-level Codex configuration isolation is verified below; system/organization policy remains applicable.
 - Further manual text-selection checks beyond the existing PDF fixtures; multiline agent preview and manual page navigation are verified below.
 - Finish remaining manual PDF selection cases, layout/export controls and real stop/clear/reconnect checks. Document/annotation MCP operations and cross-tab updates are verified below.
-- Final runtime launch audit, project settings isolation and completion of the remaining interaction checks.
+- Final runtime launch audit and completion of the remaining interaction checks.
 
 ## Additional evidence
 - 2026-11-10: highlight saved as normalized page rectangles; browser refresh restores 135 selected text rectangles. Comment edited and recovered after refresh.
@@ -31,7 +31,7 @@
 - tests/chat-display.test.tsx renders actual message components: collapsed tools/error state, public reasoning summary only, Markdown answers, hidden reference context excluded from user bubbles.
 - 13 tests pass; build passes. Real server restarted with current code.
 - Failed sends restore unsent draft; progress-only DB updates skip notes export.
-- ProjectWorkspace persists directory in project data, exports papers by ID; browser pwd test returned project notes directory. Global skill/MCP inheritance remains to isolate.
+- ProjectWorkspace persists directory in project data, exports papers by ID; browser pwd test returned project notes directory. Global skill/MCP isolation was subsequently implemented and verified below.
 - MCP control_reader real Codex call verified successful with pink temporary marks and unchanged annotation count.
 
 ## PDF resize regression (2026-11-10)
@@ -98,3 +98,13 @@
 - Real Attention PDF: title marked pink and a phrase spanning two abstract lines marked cyan simultaneously. Observed preview-vs-text-range edge differences after reanchoring were below 0.03 CSS px at 75%, 100%, 150% and a settled 390px viewport. Screenshot inspection confirms the marks cover the corresponding title and body text. These marks remain temporary; the paper still has zero saved annotations.
 - Real Causal Forcing++ PDF: complete two-line title matched as one result/two text ranges; a failed subsequent search retained both preview rectangles. Its original 135 saved rectangles and all 18 page slots remained present. Restored normal 100%/Agent-open layout and original connected Codex session.
 - 69 tests pass, including split words/lines, ligatures/accents/repeated matches, line-break hyphens, page boundaries, clipping, cross-page user-selection offsets, text-metric reanchoring and legacy fallback. Production build passes with the existing bundle-size advisory.
+
+## Project-only Codex configuration with shared login/history (2026-11-10)
+- A native probe demonstrated that `-c mcp_servers={}` and a disabled plugin default still merge global MCP entries and explicitly enabled plugins. The fix therefore creates a private native home per workspace/provider; it never edits the user's global config.
+- The native child starts in the notes workspace with the isolated home. Baseline configuration disables bundled skills, automatic account connectors and plugin defaults. Trusted project config/skills remain available. User `.agents/skills` paths outside the project are disabled; canonical path handling avoids treating macOS /var aliases or project symlinks as external. Cyclic skill symlinks are bounded.
+- Existing file-based native credentials are linked, not copied into config or logged. A fake-credential native writer check proved this installed CLI preserves the auth link and updates its target. Login-only probes report ChatGPT authentication; native tests use isolated fake account directories and do not read real credentials. Keychain-only account migration is outside implemented support.
+- Legacy resume links only the selected rollout file, not the entire history directory. Native resume-by-ID then succeeds; events written through either path remain visible through the other. Metadata saves are atomic. The installed build did not resume an external rollout by the experimental path field alone, so the implementation does not depend on that field.
+- Real native inspection: original thread 01a1c459-3915-7ec0-9a2f-b75acf79523b resumed with all 24 native items; effective user config came from the private native home. MCP status contained only litanvil (8 tools), and enabled skills were empty for the real project. No global plugin skill or account connector tools remained. System policy config remains loaded.
+- Separate temporary git project: its `.codex/config.toml` reasoning setting loaded and its sole project-fixture skill appeared enabled with repo scope. Temporary project data removed afterward.
+- Real frontend after restarting the updated server: Codex successfully called get_reader_state and replied with page 1 and the original remembered 蓝鲸42. Reload preserved that answer, all 15 Attention page slots and the connected session.
+- 73 tests pass, including private config permissions, absence of global config/instructions, shared fake auth updates, external skill/symlink handling, account mismatch preservation, selected-rollout migration and native history event sharing. Production build passes with the existing bundle-size advisory.

@@ -11,7 +11,7 @@ beforeAll(async () => {
   await fs.writeFile(transport, "#!/usr/bin/env node\n" + await fs.readFile("tests/fixtures/app-server.mjs", "utf8"));
   await fs.chmod(transport, 0o700);
   proc = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
-    env: { ...process.env, PORT: "18787", LITANVIL_DATA_DIR: dir, CODEX_BIN: transport },
+    env: { ...process.env, PORT: "18787", LITANVIL_DATA_DIR: dir, CODEX_BIN: transport, LITANVIL_CODEX_ACCOUNT_HOME: path.join(dir,"test-account"), LITANVIL_USER_HOME: path.join(dir,"test-user") },
     stdio: "ignore",
   });
   for (let i = 0; i < 60; i++) {

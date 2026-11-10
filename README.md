@@ -34,3 +34,6 @@ npm run build
 Provider adapters and the common runtime are tested independently of live accounts. See [architecture](docs/architecture.md) for the v1 session contract, endpoints, storage and extension boundaries, and [acceptance](docs/acceptance.md) for verified behavior and remaining work.
 
 Local `data/`, `uploads/`, `notes/`, logs and credentials are excluded from Git.
+
+
+Codex and Claude load project configuration for the notes workspace. Codex keeps a private native home under ignored runtime data and reuses the existing file-based login; global user plugins, MCP servers and skills are not automatically inherited. Put project Codex settings in `.codex/config.toml` and skills in `.agents/skills/` within the project. Existing native thread history remains shared through its selected rollout file. System policy still applies.

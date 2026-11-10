@@ -1,3 +1,4 @@
+import { prepareCodexHome, linkLegacyRollout } from "../codex-home.js";
 import { readingInstructions } from "../provider.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -111,9 +112,11 @@ export class CodexSession extends EventEmitter {
     if (this.ready) return this.ready;
     let connectedChild: ChildProcessWithoutNullStreams | undefined;
     this.ready = (async () => {
-      await fs.mkdir(await this.workspace(), { recursive: true });
+      const workspace = await this.workspace();
+      await fs.mkdir(workspace, { recursive: true });
       await fs.mkdir(this.storageDir, { recursive: true });
       if (this.closing) throw new Error("Codex 服务已停止");
+      const isolated = this.transport ? undefined : await prepareCodexHome(workspace, this.storageDir);
       const child =
         this.transport?.() ||
         spawn(
@@ -129,7 +132,7 @@ export class CodexSession extends EventEmitter {
             "-c",
             `mcp_servers.litanvil.args=${JSON.stringify([path.join(this.root, "server/mcp-stdio.mjs")])}`,
           ],
-          { cwd: this.root, stdio: "pipe" },
+          { cwd: workspace, stdio: "pipe", env: isolated?.environment },
         );
       this.child = child;
       connectedChild = child;
@@ -158,7 +161,7 @@ export class CodexSession extends EventEmitter {
       child.stdin.write(
         JSON.stringify({ method: "initialized", params: {} }) + "\n",
       );
-      let saved: { threadId?: string } = {};
+      let saved: { threadId?: string; rolloutPath?: string } = {};
       try {
         saved = JSON.parse(
           await fs.readFile(path.join(this.storageDir, "session.json"), "utf8"),
@@ -167,11 +170,16 @@ export class CodexSession extends EventEmitter {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       if (saved.threadId) {
+        if (isolated) await linkLegacyRollout(isolated.home,isolated.accountHome,saved.threadId,saved.rolloutPath);
         const response = await this.request("thread/resume", {
           threadId: saved.threadId,
-          cwd: await this.workspace(),
+          cwd: workspace,
+          developerInstructions: readingInstructions,
+          approvalPolicy: "never",
+          sandbox: "read-only",
         });
         this.hydrate(response.thread);
+        await this.saveThread(response.thread);
       } else await this.newThread();
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -213,6 +221,11 @@ export class CodexSession extends EventEmitter {
     this.state.error = null;
     this.publish();
   }
+  async saveThread(thread: {id:string;path?:string|null}) {
+    const temporary = path.join(this.storageDir,"session.json.tmp");
+    await fs.writeFile(temporary, JSON.stringify({threadId:thread.id,...(thread.path ? {rolloutPath:thread.path} : {})}), {mode:0o600});
+    await fs.rename(temporary,path.join(this.storageDir,"session.json"));
+  }
   async newThread() {
     const r = await this.request("thread/start", {
       cwd: await this.workspace(),
@@ -222,10 +235,7 @@ export class CodexSession extends EventEmitter {
       developerInstructions: readingInstructions,
     });
     this.hydrate(r.thread);
-    await fs.writeFile(
-      path.join(this.storageDir, "session.json"),
-      JSON.stringify({ threadId: r.thread.id }),
-    );
+    await this.saveThread(r.thread);
   }
   receive(message: any) {
     if (message.id !== undefined && !message.method) {
