@@ -15,7 +15,7 @@
 - Audit App Server crash recovery retries and thread-switch races beyond existing lifecycle tests.
 - Global plugins/MCP currently inherited; restrict to intended project config without changing global config.
 - Further visual selection checks at different zooms, multiline agent preview, (manual page navigation verified below).
-- Extend MCP reader controls with accurate UI state, loaded-page acknowledgement, tab targeting and remaining document/annotation operations.
+- Finish multiline PDF text matching/selection checks, remaining layout/export controls and real stop/clear/reconnect checks. Document/annotation MCP operations and cross-tab updates are verified below.
 - Final runtime launch audit, project settings isolation and completion of the remaining interaction checks.
 
 ## Additional evidence
@@ -80,3 +80,13 @@
 - Scroll writes are debounced, include tiny movements, flush when leaving a document, and use keepalive for pending unload requests. Queued writes retain their document ID; progress updates do not reinitialize the active reader.
 - Real browser: Attention page 4 → reload → page 4; zoom to 110% retains page 4; next → page 5 → library → reopen restores page 5. Switching to Causal Forcing++ and navigating independently does not overwrite Attention's position. At 390px, page tools remain usable without horizontal overflow and all 15 page slots remain present.
 - 53 tests pass, including delayed PDF geometry, source mismatch, malformed storage/backend fallback, small-scroll debounce/close flush, cross-document isolation and page-input validation. Production build passes with the existing bundle-size advisory.
+
+## MCP library operations and multiplexed live synchronization (2026-11-10)
+- Added get_document, get_trash, manage_document (URL import, rename, recoverable delete/restore), and manage_annotation (create, edit, recoverable delete/restore). MCP operations reuse the same validated/serialized HTTP routes as manual UI operations, with no duplicate database mutation implementation. Claude permissions derive from the shared tool catalog. Codex and Claude share reading instructions describing editable highlights/comments.
+- preview_text returns normalized quote/location for the nearest match while remaining temporary; saving requires an explicit manage_annotation call. control_reader close_document returns to the library. Fresh reader state includes annotation count.
+- An initial two-tab E2E exposed a connection-starvation bug: three independent SSE connections per tab exhausted the browser's HTTP/1 connection limit, blocking PDF loads and message POSTs. The frontend now shares one live stream per tab for agent snapshots, reader commands and library invalidations. Cache replay is limited to display state, never reader commands.
+- Library updates refetch current documents/annotations, preserve the open reader and unsent annotation input, ignore stale document responses, close a reader only when its document has been deleted, retry transient fetch failures and recover changes after reconnect. Reading-progress-only writes do not trigger full-library refreshes.
+- Real isolated-browser/native-agent checks: Codex previewed a one-page fixture and created a positioned Markdown/math annotation; Claude read and edited that same ID/location. With two tabs open, another real Claude edit appeared in both tabs with their canvases intact. MCP delete removed the annotation/highlight in both tabs; restore preserved the ID and location. Document delete returned both tabs to the library; restore and immediate targeted open succeeded. close_document acknowledged the actual homepage state.
+- Missing HTML doctype/meta viewport/title fixed; real browser now reports CSS1Compat and formula rendering no longer runs in quirks mode.
+- Temporary fixture DB/uploads/notes removed after restoring the real server. Real library still has both original documents, the Causal Forcing++ annotation's 135 rectangles, all 18 PDF page slots and the original Codex history. Native account history created during integration checks is outside the temporary library.
+- 60 tests pass, including MCP CRUD/recovery/validation, live server multiplexing, singleton client transport/cache/non-replayed commands, cross-tab UI updates and stale-response isolation. API tests inject a deterministic transport and wait for process exit during cleanup; no model calls are used by automated tests. Production build passes with the existing bundle-size advisory.

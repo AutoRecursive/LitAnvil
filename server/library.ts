@@ -188,13 +188,14 @@ function extractHtml(html: string) {
 }
 type LibraryOptions = {
   uploads: string;
+  onChange?: () => void;
   read: () => Promise<LibraryDB>;
   write: (
     db: LibraryDB,
     sync?: boolean,
   ) => Promise<void | { warning?: string }>;
 };
-export function createLibraryRouter({ uploads, read, write }: LibraryOptions) {
+export function createLibraryRouter({ uploads, read, write, onChange }: LibraryOptions) {
   const router = Router();
   let mutationTail = Promise.resolve();
   const mutationRoute =
@@ -230,6 +231,7 @@ export function createLibraryRouter({ uploads, read, write }: LibraryOptions) {
     sync = true,
   ) => {
     const result = await write(db, sync);
+    if (sync) onChange?.();
     return res.json({
       ...body,
       ...(result?.warning ? { warning: result.warning } : {}),

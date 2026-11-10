@@ -1,4 +1,5 @@
-import { assetUrl } from "./api";
+import { subscribeLive, liveClientId } from "./live";
+import { api, assetUrl } from "./api";
 import { currentPdfPage, scrollReaderTo } from "./reader-position";
 import {
   useEffect,
@@ -20,6 +21,8 @@ type Options<T extends ReaderDocument> = {
   leftOpen: boolean;
   rightOpen: boolean;
   zoom: number;
+  annotationCount: number;
+  closeDocument: () => void;
   reader: RefObject<HTMLElement | null>;
   openDocument: (doc: T) => void;
   setZoom: Dispatch<SetStateAction<number>>;
@@ -31,12 +34,11 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
   const current = useRef(options);
   current.current = options;
   useEffect(() => {
-    const clientId = crypto.randomUUID();
+    const clientId = liveClientId;
     let disposed = false;
     let connected = false;
     let lastState = "";
     let activityTimer: ReturnType<typeof setTimeout>;
-    const stream = new EventSource(`${API}/ui/events?clientId=${clientId}`);
     function snapshot() {
       const state = current.current;
       const reader = state.reader.current;
@@ -52,6 +54,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
         renderedPages: pages.filter((page) => page.dataset.ready === "true")
           .length,
         zoom: state.zoom,
+        annotationCount: state.annotationCount,
         leftOpen: state.leftOpen,
         rightOpen: state.rightOpen,
         visible: document.visibilityState === "visible",
@@ -107,16 +110,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
         );
       });
     }
-    stream.onopen = () => {
-      connected = true;
-      lastState = "";
-      void publish(true);
-    };
-    stream.onerror = () => {
-      connected = false;
-    };
-    stream.onmessage = async (event) => {
-      const command = JSON.parse(event.data);
+    const unsubscribe = subscribeLive("reader", async command => {
       if (command.clientId !== clientId) return;
       let result: Record<string, any>;
       let details: Record<string, unknown> = {};
@@ -126,12 +120,16 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           case "get_state":
             break;
           case "open_document": {
-            const doc = state.docs.find((doc) => doc.id === command.documentId);
-            if (!doc) throw new Error("文档不存在");
+            const doc = state.docs.find((doc) => doc.id === command.documentId)
+              || await api(`/documents/${encodeURIComponent(String(command.documentId || ""))}`) as T;
             state.openDocument(doc);
             await waitReady(doc.id);
             break;
           }
+          case "close_document":
+            state.closeDocument();
+            await waitFor(() => current.current.selected === null);
+            break;
           case "go_to_page": {
             if (!state.selected) throw new Error("请先打开文档");
             if (!Number.isInteger(command.page) || command.page < 1)
@@ -206,6 +204,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
             );
             if (!matched.length)
               throw new Error("未找到文本，请缩短到单行内的连续短语");
+            const locationRects: { page: number; x: number; y: number; w: number; h: number }[] = [];
             for (const span of matched) {
               const page = span.closest<HTMLElement>(".pdf-page")!;
               const start = span
@@ -217,6 +216,10 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
               range.setEnd(span.firstChild, start + needle.length);
               const box = page.getBoundingClientRect();
               for (const rect of range.getClientRects()) {
+                if (span === matched[0]) locationRects.push({
+                  page: Number(page.dataset.page), x: (rect.left - box.left) / box.width,
+                  y: (rect.top - box.top) / box.height, w: rect.width / box.width, h: rect.height / box.height,
+                });
                 const mark = document.createElement("div");
                 mark.className = "agent-preview";
                 mark.style.cssText = `left:${((rect.left - box.left) / box.width) * 100}%;top:${((rect.top - box.top) / box.height) * 100}%;width:${(rect.width / box.width) * 100}%;height:${(rect.height / box.height) * 100}%;background:${command.color === "pink" ? "#ec489955" : command.color === "blue" ? "#3b82f655" : "#06b6d455"}`;
@@ -226,6 +229,8 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
             scrollReaderTo(state.reader.current!, matched[0], true);
             details = {
               matches: matched.length,
+              quote: needle,
+              location: JSON.stringify({ rects: locationRects }),
               color: command.color || "cyan",
               pages: [
                 ...new Set(
@@ -258,7 +263,10 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           console.warn("[Reader bridge] acknowledgement failed", error);
         }
       }
-    };
+    }, {
+      onOpen: () => { connected = true; lastState = ""; void publish(true); },
+      onError: () => { connected = false; },
+    });
     const activity = () => {
       clearTimeout(activityTimer);
       activityTimer = setTimeout(() => void publish(true), 100);
@@ -272,7 +280,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
       disposed = true;
       clearInterval(interval);
       clearTimeout(activityTimer);
-      stream.close();
+      unsubscribe();
       document.removeEventListener("pointerdown", activity);
       document.removeEventListener("keydown", activity);
       document.removeEventListener("visibilitychange", activity);

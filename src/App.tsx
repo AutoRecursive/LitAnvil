@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useReaderBridge } from "./useReaderBridge";
 import { PdfReader } from "./PdfReader";
 import { PageNavigation } from "./PageNavigation";
+import { useLibrarySync } from "./useLibrarySync";
 import { useReadingPosition } from "./useReadingPosition";
 
 type Doc = {
@@ -126,6 +127,7 @@ export function App() {
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
+  useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns });
   useReaderBridge({
     docs,
     selected,
@@ -134,6 +136,8 @@ export function App() {
     zoom,
     reader,
     openDocument,
+    closeDocument,
+    annotationCount: anns.length,
     setZoom,
     setLeftOpen,
     setRightOpen,

@@ -1,3 +1,4 @@
+import { subscribeLive } from "./live";
 import React, { useEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
 const API = "http://localhost:8787/api";
@@ -40,8 +41,7 @@ export function Chat({
   const [pending, setPending] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const stream = new EventSource(API + "/agent/events");
-    stream.onmessage = (e) => setState(JSON.parse(e.data));
+    const unsubscribe = subscribeLive("agent", setState, { onError: () => setState(s => ({ ...s, status: "connecting" })) });
     fetch(API + "/agent/providers")
       .then((response) => {
         if (!response.ok) throw new Error("无法读取 Agent 后端");
@@ -49,8 +49,7 @@ export function Chat({
       })
       .then(setProviders)
       .catch((error) => setError(String(error)));
-    stream.onerror = () => setState((s) => ({ ...s, status: "connecting" }));
-    return () => stream.close();
+    return unsubscribe;
   }, []);
   useEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;

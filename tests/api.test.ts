@@ -7,8 +7,11 @@ let proc: ChildProcess, dir: string;
 const base = "http://127.0.0.1:18787";
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "litanvil-test-"));
+  const transport = path.join(dir, "codex-fixture");
+  await fs.writeFile(transport, "#!/usr/bin/env node\n" + await fs.readFile("tests/fixtures/app-server.mjs", "utf8"));
+  await fs.chmod(transport, 0o700);
   proc = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
-    env: { ...process.env, PORT: "18787", LITANVIL_DATA_DIR: dir },
+    env: { ...process.env, PORT: "18787", LITANVIL_DATA_DIR: dir, CODEX_BIN: transport },
     stdio: "ignore",
   });
   for (let i = 0; i < 60; i++) {
@@ -20,7 +23,11 @@ beforeAll(async () => {
   throw new Error("Isolated API failed to start");
 });
 afterAll(async () => {
-  proc?.kill();
+  if (proc && proc.exitCode === null && proc.signalCode === null) {
+    const exited = new Promise<void>(resolve => proc.once("exit", () => resolve()));
+    proc.kill();
+    await exited;
+  }
   await fs.rm(dir, { recursive: true, force: true });
 });
 describe("isolated document API", () => {
@@ -386,4 +393,90 @@ it("retains committed PDFs when a notes export fails and reports a recoverable w
       }),
     });
   }
+});
+
+it('exposes complete recoverable library operations through MCP using the same HTTP validation', async () => {
+  const rpc = async (name: string, args: unknown = {}) => {
+    const body = await (await fetch(base + '/mcp', {
+      method: 'POST', headers: {'content-type':'application/json'},
+      body: JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}),
+    })).json();
+    return body.result;
+  };
+  const call = async (name: string, args: unknown = {}) => {
+    const result = await rpc(name,args);
+    expect(result.isError).not.toBe(true);
+    return JSON.parse(result.content[0].text);
+  };
+  const listed = await (await fetch(base + '/mcp', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:2,method:'tools/list'})})).json();
+  expect(listed.result.tools.map((tool: any) => tool.name)).toEqual(expect.arrayContaining(['get_document','get_trash','manage_document','manage_annotation','control_reader']));
+  const document = await call('manage_document', {operation:'import',url:'data:text/html,<title>MCP%20workflow</title><p>test%20quote</p>'});
+  expect((await call('list_documents')).some((doc: any) => doc.id === document.id)).toBe(true);
+  await call('manage_document', {operation:'rename',documentId:document.id,title:'Renamed from MCP'});
+  expect((await call('get_document',{documentId:document.id})).title).toBe('Renamed from MCP');
+  const location = JSON.stringify({rects:[{page:1,x:0.1,y:0.2,w:0.3,h:0.02}]});
+  const annotation = await call('manage_annotation', {operation:'create',documentId:document.id,quote:'test quote',location,note:''});
+  expect(annotation.note).toBe('');
+  await call('manage_annotation', {operation:'update',annotationId:annotation.id,note:'**Review** $x^2$',documentId:'wrong-owner'});
+  const annotations = await call('get_annotations',{documentId:document.id});
+  expect(annotations[0]).toMatchObject({id:annotation.id,documentId:document.id,note:'**Review** $x^2$',location});
+  expect((await rpc('manage_annotation',{operation:'update',annotationId:annotation.id,note:42})).isError).toBe(true);
+  expect((await rpc('manage_document',{operation:'rename',documentId:document.id,title:''})).isError).toBe(true);
+  expect((await rpc('get_annotations')).isError).toBe(true);
+  await call('manage_annotation',{operation:'delete',annotationId:annotation.id});
+  expect(await call('get_annotations',{documentId:document.id})).toEqual([]);
+  expect((await call('get_trash')).annotations.some((item: any) => item.id === annotation.id)).toBe(true);
+  await call('manage_annotation',{operation:'restore',annotationId:annotation.id});
+  await call('manage_document',{operation:'delete',documentId:document.id});
+  expect((await rpc('get_document',{documentId:document.id})).isError).toBe(true);
+  await call('manage_document',{operation:'restore',documentId:document.id});
+  expect((await call('get_annotations',{documentId:document.id}))[0]).toMatchObject({id:annotation.id,location,note:'**Review** $x^2$'});
+});
+
+it('broadcasts committed library changes and gives reconnecting clients a current revision', async () => {
+  const controller = new AbortController();
+  const response = await fetch(base + '/api/library/events',{signal:controller.signal});
+  const reader = response.body!.getReader();
+  const revision = async () => {
+    let text = '';
+    while (!text.includes('\n\n')) text += new TextDecoder().decode((await reader.read()).value);
+    return JSON.parse(text.match(/data: (.*)/)![1]).revision;
+  };
+  try {
+    const before = await revision();
+    await fetch(base + '/api/import/url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'data:text/html,<title>Library%20event</title><p>body</p>'})});
+    const after = await revision();
+    expect(after).toBeGreaterThan(before);
+    const reconnect = await fetch(base + '/api/library/events',{signal:controller.signal});
+    const next = await reconnect.body!.getReader().read();
+    expect(new TextDecoder().decode(next.value)).toContain(`"revision":${after}`);
+  } finally { controller.abort(); }
+});
+
+
+it('multiplexes agent snapshots, reader commands and library changes on one connection', async () => {
+  const controller = new AbortController();
+  const response = await fetch(base + '/api/live/events?clientId=multiplex-test',{signal:controller.signal});
+  const reader = response.body!.getReader();
+  let buffer = '';
+  const next = async (type: string) => {
+    for (;;) {
+      const boundary = buffer.indexOf('\n\n');
+      if (boundary < 0) { buffer += new TextDecoder().decode((await reader.read()).value); continue; }
+      const frame = buffer.slice(0,boundary); buffer = buffer.slice(boundary + 2);
+      const match = frame.match(/data: (.*)/);
+      if (match) { const event = JSON.parse(match[1]); if (event.type === type) return event.data; }
+    }
+  };
+  try {
+    expect((await next('agent')).protocolVersion).toBe(1);
+    await next('library');
+    const command = fetch(base + '/mcp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:1,method:'tools/call',params:{name:'control_reader',arguments:{action:'get_state',clientId:'multiplex-test'}}})});
+    const request = await next('reader');
+    expect(request.action).toBe('get_state');
+    await fetch(base + '/api/ui/ack',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clientId:'multiplex-test',id:request.id,result:{ok:true,state:{page:2}}})});
+    expect((await (await command).json()).result.isError).toBe(false);
+    await fetch(base + '/api/import/url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'data:text/html,<title>Multiplex%20update</title><p>body</p>'})});
+    expect((await next('library')).revision).toBeGreaterThan(0);
+  } finally { controller.abort(); }
 });

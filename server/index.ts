@@ -5,6 +5,7 @@ import {
   migrateLibrary,
   type LibraryDB,
 } from "./library.js";
+import { libraryTools, callLibraryTool } from "./library-tools.js";
 import { ProjectWorkspace } from "./project.js";
 import { readerBridge, uiTools } from "./ui-bridge.js";
 import { createAgentRouter } from "./agent/http.js";
@@ -63,10 +64,25 @@ async function writeDb(db: DB, sync = true) {
   await fs.rename(temporary, dbPath);
   if (sync) return syncNotes(db);
 }
-app.use(
-  "/api",
-  createLibraryRouter({ uploads: uploadsDir, read: readDb, write: writeDb }),
-);
+const libraryClients = new Set<(event: unknown) => void>();
+let libraryRevision = 0;
+app.get("/api/library/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  libraryClients.add(send);
+  res.write(`data: ${JSON.stringify({ revision: libraryRevision })}\n\n`);
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => { clearInterval(timer); libraryClients.delete(send); });
+});
+app.use("/api", createLibraryRouter({
+  uploads: uploadsDir, read: readDb, write: writeDb,
+  onChange: () => {
+    libraryRevision++;
+    for (const client of libraryClients) client({ revision: libraryRevision });
+  },
+}));
 app.get("/api/ui/events", (req, res) => {
   const clientId = String(req.query.clientId || "");
   if (!clientId || clientId.length > 128)
@@ -117,6 +133,25 @@ const agentRoutes = createAgentRouter(session, async (body) => {
       }
     : undefined;
 });
+app.get("/api/live/events", async (req, res) => {
+  const clientId = String(req.query.clientId || "");
+  if (!clientId || clientId.length > 128) return res.status(400).json({ error: "clientId required" });
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (type: string, data: unknown) => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ type, data })}\n\n`); };
+  const agent = (data: unknown) => send("agent", data);
+  const library = (data: unknown) => send("library", data);
+  const disconnect = readerBridge.register(clientId, data => send("reader", data));
+  session.on("snapshot", agent);
+  libraryClients.add(library);
+  agent(session.state);
+  library({ revision: libraryRevision });
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => { clearInterval(timer); disconnect(); session.off("snapshot", agent); libraryClients.delete(library); });
+  try { await session.connect(); agent(session.state); }
+  catch (error) { agent({ ...session.state, status: "error", error: String(error) }); }
+});
 app.use("/api/agent", agentRoutes);
 app.use("/api/session", agentRoutes);
 app.get("/api/project", async (_req, res) =>
@@ -141,6 +176,7 @@ app.put("/api/project", async (req, res) => {
 });
 app.post("/mcp", async (req, res) => {
   const { id, method, params = {} } = req.body;
+  const started = Date.now();
   const reply = (result: any) => res.json({ jsonrpc: "2.0", id, result });
   try {
     if (method === "initialize")
@@ -151,45 +187,18 @@ app.post("/mcp", async (req, res) => {
       });
     if (method === "ping") return reply({});
     if (id === undefined) return res.status(202).end();
-    const db = await readDb();
-    if (method === "tools/list")
-      return reply({
-        tools: [
-          {
-            name: "list_documents",
-            description: "List imported documents and their IDs.",
-            inputSchema: { type: "object", properties: {} },
-          },
-          {
-            name: "get_annotations",
-            description: "Read annotations for a document.",
-            inputSchema: {
-              type: "object",
-              properties: { documentId: { type: "string" } },
-              required: ["documentId"],
-            },
-          },
-          ...uiTools,
-        ],
-      });
+    if (method === "tools/list") return reply({ tools: [...libraryTools, ...uiTools] });
     if (method === "tools/call") {
       let result: any;
       if (params.name === "control_reader")
         result = await readerBridge.command(
-          params.arguments.action,
-          params.arguments,
+          params.arguments?.action,
+          params.arguments || {},
         );
       else if (params.name === "get_reader_state")
         result = await readerBridge.readStates();
-      else if (params.name === "list_documents")
-        result = activeDocuments(db).map(({ id, title, source }) => ({
-          id,
-          title,
-          source,
-        }));
-      else if (params.name === "get_annotations")
-        result = documentAnnotations(db, params.arguments?.documentId);
-      else throw new Error("Unknown tool");
+      else result = await callLibraryTool(params.name, params.arguments || {}, port);
+      console.info("[MCP] tool", { name: params.name, operation: params.arguments?.operation || params.arguments?.action, ok: result?.ok !== false, durationMs: Date.now() - started });
       return reply({
         content: [{ type: "text", text: JSON.stringify(result) }],
         isError: result?.ok === false,
@@ -201,6 +210,7 @@ app.post("/mcp", async (req, res) => {
       error: { code: -32601, message: "Method not found" },
     });
   } catch (e) {
+    console.warn("[MCP] tool failed", { name: params.name, durationMs: Date.now() - started, error: String(e) });
     return reply({
       content: [{ type: "text", text: String(e) }],
       isError: true,

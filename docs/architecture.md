@@ -4,7 +4,7 @@ LitAnvil uses a local runtime with provider adapters, inspired by Happy's separa
 
 ```mermaid
 flowchart LR
-  UI[Shared Chat component] --> HTTP[Agent HTTP / SSE]
+  UI[Shared Chat component] --> HTTP[Agent HTTP / multiplexed SSE]
   HTTP --> Runtime[AgentRuntime: sessions, selection, journal]
   Runtime --> Codex[Codex adapter]
   Runtime --> Claude[Claude adapter]
@@ -13,6 +13,7 @@ flowchart LR
   AppServer --> MCP[LitAnvil MCP]
   SDK --> MCP
   MCP --> Reader[Targeted reader bridge]
+  MCP --> Library[Validated library HTTP routes]
 ```
 
 ## Boundaries
@@ -23,12 +24,16 @@ flowchart LR
 - `server/agent/providers/claude.ts` runs the official Claude Agent SDK, streams partial text and tool input, reconciles final blocks by ID, resumes native sessions, interrupts in-progress turns, and polls idle native transcripts for outside updates. Thinking/signature blocks are excluded from the public projection.
 - `server/agent/runtime.ts` owns workspace/provider selection, revisions, snapshots and change journals. Selection is shared by connected clients; switching while a turn is running is rejected. A failed provider can be switched away from. Clear creates a new native context only for the selected provider.
 - `server/agent/http.ts` exposes the same routes for every provider. The document server supplies a context resolver; provider adapters know nothing about the PDF database or React.
+- `src/live.ts` shares one `/api/live/events` connection per tab for agent snapshots, targeted reader commands and library invalidation events. Display snapshots are cached for component remounts; reader commands are never replayed. A reconnect sends current agent/library state. This avoids HTTP/1 connection starvation when multiple readers are open.
+- `server/library-tools.ts` exposes document/annotation MCP operations through the same validated and serialized library routes used by the UI. Claude permissions derive from this tool catalog.
 - `server/ui-bridge.ts` and `src/useReaderBridge.ts` target one reader tab, authenticate acknowledgements by command/tab IDs, and wait for loaded PDF pages. Both providers use this MCP surface.
 
 ## HTTP contract
 
 | Method | Path | Result |
 | --- | --- | --- |
+| GET | `/api/live/events?clientId=ID` | Multiplexed `{type: "agent" \| "reader" \| "library", data}` events (frontend default) |
+| GET | `/api/library/events` | Dedicated library invalidation stream for integrations |
 | GET | `/api/agent/providers` | Available CLI binaries and provider capabilities |
 | GET | `/api/agent/state` | Current authoritative snapshot |
 | GET | `/api/agent/events` | SSE snapshots with session/revision event IDs |
@@ -40,7 +45,7 @@ flowchart LR
 
 `/api/session/*` remains an alias for callers; its event payload is the new v1 contract. This is a protocol change from native Codex items. New consumers should use `/api/agent/*`.
 
-SSE reconnect sends the current full snapshot; clients do not have to reconstruct partial output from old network events. The revisioned change journal is separately available for diagnostics and replay consumers.
+The dedicated `/api/agent/events` and `/api/ui/events` remain available for integrations. The app itself uses only the multiplexed stream. SSE reconnect sends the current full snapshot; clients do not have to reconstruct partial output from old network events. The revisioned change journal is separately available for diagnostics and replay consumers.
 
 ## Persistence and account settings
 

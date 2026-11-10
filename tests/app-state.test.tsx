@@ -10,17 +10,19 @@ const documents = ['A', 'B'].map(id => ({id, title: `Paper ${id}`, source: id, s
 let container: HTMLDivElement;
 let root: Root;
 let request: ReturnType<typeof vi.fn>;
+let streams: Map<string, any>;
 function result(body: unknown, ok = true) {return {ok, json: async () => body, text: async () => JSON.stringify(body)}}
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear(); sessionStorage.clear();
   vi.stubGlobal('matchMedia', () => ({matches: false, addEventListener() {}, removeEventListener() {}}));
-  vi.stubGlobal('EventSource', class {close() {}});
+  streams = new Map();
+  vi.stubGlobal('EventSource', class {constructor(url: string) {streams.set(url, this)} close() {}});
   request = vi.fn(async (url: string) => result(url.endsWith('/documents') ? documents : url.endsWith('/project') ? {directory: '/notes'} : []));
   vi.stubGlobal('fetch', request);
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => {await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals()});
+afterEach(async () => {await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()});
 
 it('ignores annotation responses from a document that was closed or switched', async () => {
   let resolveA!: (value: unknown) => void;
@@ -53,4 +55,43 @@ it('keeps library data and displays failed document deletion errors', async () =
   await act(async () => container.querySelector<HTMLButtonElement>('.document-delete')!.click());
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('Deletion unavailable');
   expect(container.querySelectorAll('.library-open')).toHaveLength(2);
+});
+
+
+it('syncs externally edited annotations without closing or replacing the open reader', async () => {
+  vi.useFakeTimers();
+  sessionStorage.setItem('litanvil-open-document', 'A');
+  let annotations = [{id:'ann',quote:'Evidence',note:'Original',location:'{}'}];
+  request.mockImplementation(async (url: string) => result(url.endsWith('/documents') ? documents : url.endsWith('/annotations') ? annotations : {directory:'/notes'}));
+  await act(async () => root.render(<App/>));
+  const paper = container.querySelector('.paper');
+  const stream = [...streams.values()][0];
+  annotations = [{id:'ann',quote:'Evidence',note:'Agent edited **note**',location:'{}'}];
+  await act(async () => { stream.onmessage({data:'{"type":"library","data":{"revision":1}}'}); vi.advanceTimersByTime(80); });
+  expect(container.querySelector('.paper')).toBe(paper);
+  expect(container.querySelector('.ann-list')?.textContent).toContain('Agent edited note');
+  annotations = [];
+  await act(async () => { stream.onmessage({data:'{"type":"library","data":{"revision":2}}'}); vi.advanceTimersByTime(80); });
+  expect(container.querySelector('.paper')).toBe(paper);
+  expect(container.querySelector('.ann-list')?.textContent).not.toContain('Agent edited');
+});
+it('closes a deleted document on external changes and cannot reopen it from a late sync response', async () => {
+  vi.useFakeTimers();
+  sessionStorage.setItem('litanvil-open-document','A');
+  await act(async () => root.render(<App/>));
+  const stream = [...streams.values()][0];
+  let resolve!: (value: unknown) => void;
+  request.mockImplementation(async (url: string) => url.endsWith('/documents') ? new Promise(done => { resolve = done; }) : result([]));
+  await act(async () => { stream.onmessage({data:'{"type":"library","data":{"revision":1}}'}); vi.advanceTimersByTime(80); });
+  await act(async () => container.querySelector<HTMLButtonElement>('.back')!.click());
+  await act(async () => resolve(result(documents)));
+  expect(container.querySelector('.paper')).toBeNull();
+  expect(sessionStorage.getItem('litanvil-open-document')).toBeNull();
+  request.mockImplementation(async (url: string) => result(url.endsWith('/documents') ? documents : []));
+  await act(async () => container.querySelector<HTMLButtonElement>('.library-open')!.click());
+  request.mockImplementation(async (url: string) => result(url.endsWith('/documents') ? [documents[1]] : []));
+  await act(async () => { stream.onmessage({data:'{"type":"library","data":{"revision":2}}'}); vi.advanceTimersByTime(80); });
+  expect(container.querySelector('.paper')).toBeNull();
+  expect(sessionStorage.getItem('litanvil-open-document')).toBeNull();
+  expect(container.querySelectorAll('.library-open')).toHaveLength(1);
 });

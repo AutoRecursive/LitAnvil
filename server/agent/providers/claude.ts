@@ -1,3 +1,4 @@
+import { libraryTools } from "../../library-tools.js";
 import { claudeAuthentication } from "../claude-auth.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -315,8 +316,7 @@ export class ClaudeAdapter extends AgentAdapter {
         "Grep",
         "mcp__litanvil__control_reader",
         "mcp__litanvil__get_reader_state",
-        "mcp__litanvil__list_documents",
-        "mcp__litanvil__get_annotations",
+        ...libraryTools.map(tool => `mcp__litanvil__${tool.name}`),
       ],
       mcpServers: {
         litanvil: {

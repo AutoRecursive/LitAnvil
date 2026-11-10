@@ -99,7 +99,7 @@ export const uiTools = [
   {
     name: "control_reader",
     description:
-      "Control one LitAnvil tab (the most recently used visible tab by default). open_document waits until the document is ready. preview_text uses temporary colored overlays and never saves annotations.",
+      "Control one LitAnvil tab (the most recently used visible tab by default). open_document waits until the document is ready. preview_text uses temporary colored overlays and never saves annotations. Its result includes quote/location for the nearest match, usable by manage_annotation to save only when requested. close_document returns to the document library.",
     inputSchema: {
       type: "object",
       properties: {
@@ -108,6 +108,7 @@ export const uiTools = [
           enum: [
             "get_state",
             "open_document",
+            "close_document",
             "go_to_page",
             "preview_text",
             "clear_preview",
