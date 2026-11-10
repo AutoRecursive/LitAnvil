@@ -24,7 +24,7 @@ beforeEach(() => {
     return {top, bottom: top + height, height} as DOMRect;
   });
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 async function load() {
   await act(async () => root.render(<Harness/>));
   await act(async () => { host.querySelector('.pdf-pages')!.innerHTML = [1,2,3].map(page => `<section class="pdf-page" data-page="${page}"></section>`).join(''); });
@@ -89,4 +89,15 @@ it('keeps separate positions for different documents and does not save one docum
   await act(async () => { reader.scrollTop = 2100; reader.dispatchEvent(new Event('scroll')); root.render(<Harness/>); });
   expect(persist).toHaveBeenCalledWith('other', 2100 / 2700);
   expect(reader.scrollTop).toBe(1300);
+});
+
+it('updates the displayed current page when a pane resize changes page visibility without a scroll event',async()=>{
+ let notify!:()=>void;
+ vi.stubGlobal('ResizeObserver',class{constructor(callback:()=>void){notify=callback}observe(){}disconnect(){}});
+ await load();await dimensions();const reader=host.querySelector('article')!;
+ await act(async()=>{reader.scrollTop=800;reader.dispatchEvent(new Event('scroll'))});
+ expect(host.querySelector('input')!.value).toBe('2');
+ reader.getBoundingClientRect=()=>({top:0,bottom:100,height:100}) as DOMRect;
+ await act(async()=>notify());
+ expect(host.querySelector('input')!.value).toBe('1');
 });

@@ -77,3 +77,10 @@ Codex isolation follows the official [state/config locations](https://developers
 Frontend chat actions include expected session/workspace identifiers. The runtime serializes message admission and directory changes, rejects stale targets, and keeps stop available during native turn admission. Draft and failed-message recovery state lives in a per-tab external store so changing the presentation between homepage and PDF cannot lose asynchronous failure recovery.
 
 Development tooling ignores and denies serving the runtime data, notes, uploads and logs directories. Native plugin caches may contain third-party HTML/package/test files even while the plugins are disabled; these files must not trigger Vite reloads, become optimizer entrypoints or participate in project tests. A library live reconnect recovers a saved document after an initial backend outage and clears only its stale startup error.
+
+
+## Reader layout and exports
+
+`shared/reader-layout.ts` owns bounded pane preferences for both manual resizers and MCP. The reader bridge returns those preferences plus measured responsive DOM dimensions, waiting for layout stability before acknowledging geometry-changing actions. Browser page tracking also observes viewport size changes.
+
+`/api/documents/:id/export.json` and `export.md` read the same active annotation records used by the library. `shared/document-export.ts` handles filenames and format metadata. Both manual buttons and MCP reader download requests use `src/document-download.ts`; the backend export_document tool returns the same authoritative bytes and a download URL. A requested browser download and a completed filesystem save are distinct states.

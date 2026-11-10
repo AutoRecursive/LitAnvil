@@ -86,10 +86,13 @@ export function useReadingPosition({ id, source, initialProgress, reader, persis
     const observer = new MutationObserver(restore);
     observer.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "data-source"] });
     element.addEventListener("scroll", update, { passive: true });
+    const resize=typeof ResizeObserver!=="undefined"?new ResizeObserver(update):undefined;
+    resize?.observe(element);
     window.addEventListener("pagehide", flush);
     restore();
     return () => {
       observer.disconnect();
+      resize?.disconnect();
       element.removeEventListener("scroll", update);
       window.removeEventListener("pagehide", flush);
       flush();

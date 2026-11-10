@@ -1,21 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
-const defaults = {
-  leftWidth: 240,
-  rightWidth: 360,
-  documentShare: 40,
-  readerShare: 60,
-  headerHeight: 64,
-  toolbarHeight: 56,
-};
-export type PaneLayout = typeof defaults;
-const bounds: Record<keyof PaneLayout, [number, number]> = {
-  leftWidth: [180, 500],
-  rightWidth: [260, 700],
-  documentShare: [15, 80],
-  readerShare: [25, 80],
-  headerHeight: [48, 96],
-  toolbarHeight: [56, 140],
-};
+import { paneDefaults as defaults, paneBounds as bounds, validateLayoutPatch, type PaneLayout } from "../shared/reader-layout";
+export type {PaneLayout} from "../shared/reader-layout";
 export function usePaneLayout(leftOpen = true, rightOpen = true) {
   const [layout, setLayout] = useState<PaneLayout>(() => {
     try {
@@ -63,6 +48,10 @@ export function usePaneLayout(leftOpen = true, rightOpen = true) {
       ...previous,
       [key]: Math.max(bounds[key][0], Math.min(bounds[key][1], value)),
     }));
+  const apply = (input: unknown) => {
+    const patch = validateLayoutPatch(input);
+    setLayout(previous=>({...previous,...patch}));
+  };
   const style = {
     "--left-width": `${leftWidth}px`,
     "--right-width": `${rightWidth}px`,
@@ -73,5 +62,5 @@ export function usePaneLayout(leftOpen = true, rightOpen = true) {
     "--header-height": `${layout.headerHeight}px`,
     "--toolbar-height": `${layout.toolbarHeight}px`,
   } as CSSProperties;
-  return { layout, set, style, narrow, width, leftWidth, rightWidth, defaults };
+  return { layout, set, apply, style, narrow, width, leftWidth, rightWidth, defaults };
 }

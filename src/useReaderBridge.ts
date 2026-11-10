@@ -1,3 +1,5 @@
+import { paneDefaults, validateLayoutPatch, type PaneLayout } from "../shared/reader-layout";
+import { downloadAnnotations } from "./document-download";
 import { findPdfText, paintPdfPreview } from "./pdf-text";
 import { subscribeLive, liveClientId } from "./live";
 import { api, assetUrl } from "./api";
@@ -23,6 +25,8 @@ type Options<T extends ReaderDocument> = {
   rightOpen: boolean;
   zoom: number;
   annotationCount: number;
+  paneLayout: PaneLayout;
+  setPaneLayout: (patch:unknown)=>void;
   closeDocument: () => void;
   reader: RefObject<HTMLElement | null>;
   openDocument: (doc: T) => void;
@@ -56,6 +60,15 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
           .length,
         zoom: state.zoom,
         annotationCount: state.annotationCount,
+        layout:state.paneLayout,
+        renderedLayout:{
+          leftWidth:document.querySelector('aside[aria-label="文档与批注"]')?.getBoundingClientRect().width||0,
+          agentWidth:document.querySelector('.ai-panel')?.getBoundingClientRect().width||0,
+          readerWidth:reader?.getBoundingClientRect().width||0,
+          readerHeight:reader?.getBoundingClientRect().height||0,
+          headerHeight:document.querySelector('header')?.getBoundingClientRect().height||0,
+          toolbarHeight:document.querySelector('.reader-top')?.getBoundingClientRect().height||0,
+        },
         leftOpen: state.leftOpen,
         rightOpen: state.rightOpen,
         visible: document.visibilityState === "visible",
@@ -111,6 +124,17 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
         );
       });
     }
+    async function waitForVisualLayout() {
+      let signature="", stableSince=Date.now();
+      await waitFor(()=>{
+        const state=current.current,reader=state.reader.current;
+        const page=currentPdfPage(reader);
+        const next=JSON.stringify([snapshot().renderedLayout,page?.style.width,page?.style.height,page?.dataset.ready]);
+        if(next!==signature){signature=next;stableSince=Date.now();}
+        const ready=!state.selected?.fileUrl || page?.dataset.ready==="true";
+        return ready && Date.now()-stableSince>=160;
+      });
+    }
     const unsubscribe = subscribeLive("reader", async command => {
       if (command.clientId !== clientId) return;
       let result: Record<string, any>;
@@ -143,12 +167,26 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
             scrollReaderTo(state.reader.current!, page);
             break;
           }
+          case "set_layout":
+          case "reset_layout": {
+            const patch=command.action==="reset_layout"?paneDefaults:validateLayoutPatch(command.layout);
+            state.setPaneLayout(patch);
+            await waitFor(()=>Object.entries(patch).every(([key,value])=>current.current.paneLayout[key as keyof PaneLayout]===value));
+            await waitForVisualLayout();
+            break;
+          }
+          case "download_annotations":
+            if (!state.selected) throw new Error("请先打开文档");
+            if(command.format!=="json" && command.format!=="markdown")throw new Error("导出格式仅支持 json 或 markdown");
+            details={download:await downloadAnnotations(state.selected,command.format)};
+            break;
           case "set_zoom": {
             const zoom = Number(command.zoom);
             if (!Number.isFinite(zoom) || zoom < 0.75 || zoom > 1.8)
               throw new Error("缩放范围为 75%–180%");
             state.setZoom(zoom);
             await waitFor(() => current.current.zoom === zoom);
+            await waitForVisualLayout();
             break;
           }
           case "toggle_left":
@@ -157,6 +195,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
               () =>
                 current.current.leftOpen === (command.open ?? !state.leftOpen),
             );
+            await waitForVisualLayout();
             break;
           case "toggle_right":
             state.setRightOpen(command.open ?? !state.rightOpen);
@@ -165,6 +204,7 @@ export function useReaderBridge<T extends ReaderDocument>(options: Options<T>) {
                 current.current.rightOpen ===
                 (command.open ?? !state.rightOpen),
             );
+            await waitForVisualLayout();
             break;
           case "clear_preview":
             state.reader.current

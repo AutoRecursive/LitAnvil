@@ -497,3 +497,19 @@ it('checks the frontend session target on all chat actions so stale tabs cannot 
   const after=await(await fetch(base+'/api/agent/state')).json();
   expect(after.sessionId).toBe(current.sessionId);expect(after.items).toEqual(current.items);
 });
+
+it('exports the same authoritative annotations through JSON, Markdown and MCP with safe filenames',async()=>{
+ const post=async(route:string,body:any,method='POST')=>(await(await fetch(base+route,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json());
+ const document=await post('/api/import/url',{url:'data:text/html,<title>Export%20workflow</title><p>source</p>'});
+ await post('/api/documents/'+document.id,{title:"Alice's / 研究 😀"},'PATCH');
+ const location=JSON.stringify({version:2,rects:[{page:1,x:0.1,y:0.2,w:0.3,h:0.02}],textRanges:[{page:1,node:3,start:0,end:5}]});
+ const annotation=await post('/api/annotations',{documentId:document.id,quote:'source',note:'old',location});
+ await post('/api/annotations/'+annotation.id,{note:'**Current** $E=mc^2$'},'PATCH');
+ const response=await fetch(base+`/api/documents/${document.id}/export.json`);const bundle=await response.json();
+ expect(bundle.annotations[0]).toMatchObject({id:annotation.id,note:'**Current** $E=mc^2$',location});expect(response.headers.get('content-disposition')).toContain('%27');
+ const mcp=await post('/mcp',{id:1,method:'tools/call',params:{name:'export_document',arguments:{documentId:document.id,format:'json'}}});
+ expect(mcp.result.isError).toBe(false);const exported=JSON.parse(mcp.result.content[0].text);expect(JSON.parse(exported.content)).toEqual(bundle);expect(exported.filename).not.toContain('/');expect(exported.downloadUrl).toContain('/export.json');
+ const markdown=await post('/mcp',{id:1,method:'tools/call',params:{name:'export_document',arguments:{documentId:document.id,format:'markdown'}}});expect(JSON.parse(markdown.result.content[0].text).content).toContain('**Current** $E=mc^2$');
+ await fetch(base+'/api/annotations/'+annotation.id,{method:'DELETE'});expect((await(await fetch(base+`/api/documents/${document.id}/export.json`)).json()).annotations).toEqual([]);
+ await fetch(base+'/api/documents/'+document.id,{method:'DELETE'});expect((await fetch(base+`/api/documents/${document.id}/export.json`)).status).toBe(404);
+});

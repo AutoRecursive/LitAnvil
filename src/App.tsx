@@ -1,3 +1,6 @@
+import {paneBounds, paneDefaults} from "../shared/reader-layout";
+import { downloadAnnotations } from "./document-download";
+import type {ExportFormat} from "../shared/document-export";
 import { pdfSelectionLocation } from "./pdf-text";
 import { API, api, assetUrl } from "./api";
 import { Dialog } from "./Dialog";
@@ -144,6 +147,8 @@ export function App() {
     openDocument,
     closeDocument,
     annotationCount: anns.length,
+    paneLayout:panes.layout,
+    setPaneLayout:panes.apply,
     setZoom,
     setLeftOpen,
     setRightOpen,
@@ -350,27 +355,10 @@ export function App() {
       setAnnotationPending(false);
     }
   }
-  function exportJson() {
+  async function exportDocument(format:ExportFormat) {
     if (!selected) return;
-    const blob = new Blob(
-      [
-        JSON.stringify(
-          {
-            document: selected.title,
-            documentId: selected.id,
-            annotations: anns,
-          },
-          null,
-          2,
-        ),
-      ],
-      { type: "application/json" },
-    );
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${selected.title}-annotations.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    try { await downloadAnnotations(selected,format); }
+    catch(error) { setError(String(error)); }
   }
   async function loadProject() {
     try {
@@ -403,10 +391,6 @@ export function App() {
     } catch (e) {
       setProjectError(String(e));
     }
-  }
-  async function exportMd() {
-    if (selected)
-      window.open(`${API}/documents/${selected.id}/export.md`, "_blank");
   }
   const pagination = useReadingPosition({
     id: selected?.id,
@@ -502,9 +486,9 @@ export function App() {
           orientation="horizontal"
           label="顶部栏高度"
           value={panes.layout.headerHeight}
-          min={48}
-          max={96}
-          defaultValue={64}
+          min={paneBounds.headerHeight[0]}
+          max={paneBounds.headerHeight[1]}
+          defaultValue={paneDefaults.headerHeight}
           onChange={(value) => panes.set("headerHeight", value)}
         />
       </header>
@@ -624,9 +608,9 @@ export function App() {
                 orientation="horizontal"
                 label="文档与批注分区"
                 value={panes.layout.documentShare}
-                min={15}
-                max={80}
-                defaultValue={40}
+                min={paneBounds.documentShare[0]}
+                max={paneBounds.documentShare[1]}
+                defaultValue={paneDefaults.documentShare}
                 step={2}
                 pixelsPerUnit={() =>
                   Math.max(
@@ -704,19 +688,19 @@ export function App() {
             orientation="vertical"
             label="左侧栏宽度"
             value={panes.leftWidth}
-            min={180}
+            min={paneBounds.leftWidth[0]}
             max={
               panes.narrow
-                ? Math.min(500, panes.width * 0.85)
+                ? Math.min(paneBounds.leftWidth[1], panes.width * 0.85)
                 : Math.max(
-                    180,
+                    paneBounds.leftWidth[0],
                     Math.min(
-                      500,
+                      paneBounds.leftWidth[1],
                       panes.width - (rightOpen ? panes.rightWidth : 0) - 268,
                     ),
                   )
             }
-            defaultValue={240}
+            defaultValue={paneDefaults.leftWidth}
             onChange={(value) => panes.set("leftWidth", value)}
           />
         </aside>
@@ -848,8 +832,8 @@ export function App() {
                   >
                     ＋
                   </button>
-                  <button onClick={exportMd}>↓ Markdown</button>
-                  <button onClick={exportJson}>JSON</button>
+                  <button onClick={()=>void exportDocument("markdown")}>↓ Markdown</button>
+                  <button onClick={()=>void exportDocument("json")}>JSON</button>
                 </div>
                 <ResizeHandle
                   className="toolbar-resize"
@@ -860,9 +844,9 @@ export function App() {
                     readerToolbar.current?.clientHeight ||
                     panes.layout.toolbarHeight
                   }
-                  min={56}
-                  max={140}
-                  defaultValue={56}
+                  min={paneBounds.toolbarHeight[0]}
+                  max={paneBounds.toolbarHeight[1]}
+                  defaultValue={paneDefaults.toolbarHeight}
                   onChange={(value) => panes.set("toolbarHeight", value)}
                 />
               </div>
@@ -947,21 +931,21 @@ export function App() {
                     value={
                       panes.narrow ? panes.layout.readerShare : panes.rightWidth
                     }
-                    min={panes.narrow ? 25 : 260}
+                    min={panes.narrow ? paneBounds.readerShare[0] : paneBounds.rightWidth[0]}
                     max={
                       panes.narrow
-                        ? 80
+                        ? paneBounds.readerShare[1]
                         : Math.max(
-                            260,
+                            paneBounds.rightWidth[0],
                             Math.min(
-                              700,
+                              paneBounds.rightWidth[1],
                               panes.width -
                                 (leftOpen ? panes.leftWidth : 0) -
                                 268,
                             ),
                           )
                     }
-                    defaultValue={panes.narrow ? 60 : 360}
+                    defaultValue={panes.narrow ? paneDefaults.readerShare : paneDefaults.rightWidth}
                     direction={panes.narrow ? 1 : -1}
                     step={panes.narrow ? 2 : 10}
                     pixelsPerUnit={() =>

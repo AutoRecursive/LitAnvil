@@ -1,3 +1,4 @@
+import { exportFilename, exportFormats, type ExportFormat } from "../shared/document-export.js";
 import { Router, type Response, type RequestHandler } from "express";
 import multer from "multer";
 import fs from "node:fs/promises";
@@ -404,16 +405,17 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
     annotation.updatedAt = new Date().toISOString();
     await save(res, db, annotation);
   });
-  router.get("/documents/:id/export.md", async (req, res) => {
-    const db = await read();
-    const document = find(db, req.params.id);
-    if (!document) return res.status(404).json({ error: "文档不存在" });
-    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="notes.md"; filename*=UTF-8''${encodeURIComponent(document.title)}.md`,
-    );
-    res.send(exportMarkdown(document, documentAnnotations(db, document.id)));
+  for (const format of ["json","markdown"] as ExportFormat[]) router.get(`/documents/:id/export.${exportFormats[format].extension}`, async (req,res)=>{
+    const db=await read();const document=find(db,req.params.id);
+    if (!document) return res.status(404).json({error:"文档不存在"});
+    const filename=exportFilename(document,format);
+    const encoded=encodeURIComponent(filename).replace(/['()*]/g,character=>`%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader("Content-Type",exportFormats[format].mimeType);
+    res.setHeader("Access-Control-Expose-Headers","Content-Disposition");
+    res.setHeader("Content-Disposition",`attachment; filename="annotations.${exportFormats[format].extension}"; filename*=UTF-8''${encoded}`);
+    const annotations=documentAnnotations(db,document.id);
+    if (format==="json") res.json({document:document.title,documentId:document.id,annotations});
+    else res.send(exportMarkdown(document,annotations));
   });
   post("/import/url", async (req, res) => {
     let file: string | undefined;

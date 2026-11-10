@@ -1,3 +1,4 @@
+import {paneLayoutSchema} from "../shared/reader-layout.js";
 import { randomUUID } from "node:crypto";
 
 type Client = {
@@ -99,7 +100,7 @@ export const uiTools = [
   {
     name: "control_reader",
     description:
-      "Control one LitAnvil tab (the most recently used visible tab by default). open_document waits until the document is ready. preview_text uses temporary colored overlays and never saves annotations. Its result includes quote/location for the nearest match, usable by manage_annotation to save only when requested. close_document returns to the document library.",
+      "Control one LitAnvil tab (the most recently used visible tab by default). open_document waits until the document is ready. preview_text uses temporary colored overlays and never saves annotations. Its result includes quote/location for the nearest match, usable by manage_annotation to save only when requested. close_document returns to the document library. set_layout changes persisted pane preferences within bounds; renderedLayout reports the responsive dimensions. reset_layout restores defaults. download_annotations requests a JSON/Markdown browser download, without claiming the file has finished saving.",
     inputSchema: {
       type: "object",
       properties: {
@@ -113,10 +114,15 @@ export const uiTools = [
             "preview_text",
             "clear_preview",
             "set_zoom",
+            "set_layout",
+            "reset_layout",
+            "download_annotations",
             "toggle_left",
             "toggle_right",
           ],
         },
+        layout:paneLayoutSchema,
+        format:{type:"string",enum:["json","markdown"]},
         clientId: { type: "string" },
         documentId: { type: "string" },
         page: { type: "integer", minimum: 1 },
