@@ -13,6 +13,11 @@ export const libraryTools = [
     operation: { type: "string", enum: ["create", "update", "delete", "restore"] }, annotationId: { type: "string" }, documentId: { type: "string" }, quote: { type: "string" }, note: { type: "string" }, location: { type: "string" }, color: { type: "string" },
   }, required: ["operation"] } },
 ];
+
+export const qmdTools = [
+  { name: "search_knowledge", description: "Read-only QMD search across all imported papers in the project notes index. Use this for cross-paper concepts, prior annotations and evidence. Set semantic=true when embeddings are available; otherwise the tool uses stable keyword search. Results include document IDs, scores, source lines and snippets; call get_document before relying on a result.", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 20 }, semantic: { type: "boolean" } }, required: ["query"] } },
+  { name: "find_similar_papers", description: "Read-only similarity search for the current paper across other imported papers. It uses QMD vectors when available and falls back to keyword retrieval when this machine has no embeddings. Excludes the current document. Use returned document IDs with get_document for comparison.", inputSchema: { type: "object", properties: { documentId: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 12 } }, required: ["documentId"] } },
+];
 export async function callLibraryTool(name: string, args: Record<string, unknown>, port: number) {
   const required = (key: string) => {
     const value = args[key];

@@ -5,7 +5,8 @@ import {
   migrateLibrary,
   type LibraryDB,
 } from "./library.js";
-import { libraryTools, callLibraryTool } from "./library-tools.js";
+import { libraryTools, qmdTools, callLibraryTool } from "./library-tools.js";
+import { QmdIndex, qmdToolResults } from "./qmd.js";
 import { ProjectWorkspace } from "./project.js";
 import { readerBridge, uiTools } from "./ui-bridge.js";
 import { createAgentRouter } from "./agent/http.js";
@@ -25,6 +26,7 @@ const workspace = new ProjectWorkspace(
   dataDir,
   path.join(process.env.LITANVIL_DATA_DIR || root, "notes"),
 );
+const qmd = new QmdIndex(dataDir, () => workspace.directory());
 const uploadsDir = process.env.LITANVIL_DATA_DIR
   ? path.join(dataDir, "uploads")
   : path.join(root, "uploads");
@@ -52,6 +54,7 @@ async function syncNotes(db: DB) {
       db.annotations.filter((annotation) => !annotation.deletedAt),
     );
     notesSyncError = undefined;
+    qmd.scheduleUpdate();
   } catch (error) {
     console.error("[Library] notes export failed", error);
     notesSyncError = "数据已保存，但笔记同步失败，请检查笔记目录权限";
@@ -185,7 +188,7 @@ app.post("/mcp", async (req, res) => {
       });
     if (method === "ping") return reply({});
     if (id === undefined) return res.status(202).end();
-    if (method === "tools/list") return reply({ tools: [...libraryTools, ...uiTools] });
+    if (method === "tools/list") return reply({ tools: [...libraryTools, ...qmdTools, ...uiTools] });
     if (method === "tools/call") {
       let result: any;
       if (params.name === "control_reader")
@@ -195,7 +198,13 @@ app.post("/mcp", async (req, res) => {
         );
       else if (params.name === "get_reader_state")
         result = await readerBridge.readStates();
-      else result = await callLibraryTool(params.name, params.arguments || {}, port);
+      else if (params.name === "search_knowledge") {
+        const args = params.arguments || {};
+        result = { ok: true, results: qmdToolResults(await qmd.search(String(args.query || ""), { limit: Number(args.limit) || 8, semantic: args.semantic === true })) };
+      } else if (params.name === "find_similar_papers") {
+        const args = params.arguments || {};
+        result = { ok: true, results: qmdToolResults(await qmd.similar(String(args.documentId || ""), Number(args.limit) || 6)) };
+      } else result = await callLibraryTool(params.name, params.arguments || {}, port);
       console.info("[MCP] tool", { name: params.name, operation: params.arguments?.operation || params.arguments?.action, ok: result?.ok !== false, durationMs: Date.now() - started });
       return reply({
         content: [{ type: "text", text: JSON.stringify(result) }],

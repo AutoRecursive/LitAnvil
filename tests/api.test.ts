@@ -409,7 +409,7 @@ it('exposes complete recoverable library operations through MCP using the same H
     return JSON.parse(result.content[0].text);
   };
   const listed = await (await fetch(base + '/mcp', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:2,method:'tools/list'})})).json();
-  expect(listed.result.tools.map((tool: any) => tool.name)).toEqual(expect.arrayContaining(['get_document','get_trash','manage_document','manage_annotation','control_reader']));
+  expect(listed.result.tools.map((tool: any) => tool.name)).toEqual(expect.arrayContaining(['get_document','get_trash','manage_document','manage_annotation','control_reader','search_knowledge','find_similar_papers']));
   const document = await call('manage_document', {operation:'import',url:'data:text/html,<title>MCP%20workflow</title><p>test%20quote</p>'});
   expect((await call('list_documents')).some((doc: any) => doc.id === document.id)).toBe(true);
   await call('manage_document', {operation:'rename',documentId:document.id,title:'Renamed from MCP'});

@@ -6,6 +6,7 @@ coverage/
 
 # Local documents, notes, session state, and logs
 data/
+.qmd/
 uploads/
 notes/
 logs/
