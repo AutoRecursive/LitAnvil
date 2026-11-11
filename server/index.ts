@@ -1,66 +1,261 @@
-import {ProjectWorkspace} from './project.js';
-import {readerBridge,uiTools} from './ui-bridge.js';
-import {canonicalUrl} from './import-utils.js';
-import {CodexSession} from './session.js';
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import { JSDOM } from 'jsdom';
-import { PDFParse } from 'pdf-parse';
+import {
+  createLibraryRouter,
+  activeDocuments,
+  documentAnnotations,
+  migrateLibrary,
+  type LibraryDB,
+} from "./library.js";
+import { libraryTools, callLibraryTool } from "./library-tools.js";
+import { ProjectWorkspace } from "./project.js";
+import { readerBridge, uiTools } from "./ui-bridge.js";
+import { createAgentRouter } from "./agent/http.js";
+import { AgentRuntime } from "./agent/runtime.js";
+import express from "express";
+import cors from "cors";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
 const root = process.cwd();
-const dataDir=process.env.LITANVIL_DATA_DIR||path.join(root,'data');
-await fs.mkdir(dataDir,{recursive:true});
-const dbPath = path.join(dataDir, 'db.json');
-const workspace=new ProjectWorkspace(dataDir,path.join(process.env.LITANVIL_DATA_DIR||root,'notes'));
-const uploadsDir=process.env.LITANVIL_DATA_DIR?path.join(dataDir,'uploads'):path.join(root,'uploads');
-await fs.mkdir(uploadsDir,{recursive:true});
-const logsDir = path.join(root, 'logs');
-const codexLog = path.join(logsDir, 'codex.log');
-const upload = multer({ dest: uploadsDir });
-await fs.mkdir(logsDir,{recursive:true});
-app.use(cors()); app.use(express.json({ limit: '2mb' })); app.use('/uploads', express.static(uploadsDir));
+const dataDir = process.env.LITANVIL_DATA_DIR || path.join(root, "data");
+await fs.mkdir(dataDir, { recursive: true });
+const dbPath = path.join(dataDir, "db.json");
+const workspace = new ProjectWorkspace(
+  dataDir,
+  path.join(process.env.LITANVIL_DATA_DIR || root, "notes"),
+);
+const uploadsDir = process.env.LITANVIL_DATA_DIR
+  ? path.join(dataDir, "uploads")
+  : path.join(root, "uploads");
+await fs.mkdir(uploadsDir, { recursive: true });
+const logsDir = path.join(root, "logs");
+await fs.mkdir(logsDir, { recursive: true });
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
+app.use("/uploads", express.static(uploadsDir));
 
-type Document = { id:string; title:string; author:string; source:string; sourceType:'web'|'arxiv'|'pdf'|'epub'; tags:string[]; createdAt:string; progress:number; content:string; htmlSnapshot?:string; fileUrl?:string; mimeType?:string; contentHash?:string };
-type Annotation = { id:string; documentId:string; quote:string; textHash:string; location:string; page?:number; domPath?:string; cfi?:string; note:string; aiAnswer?:string; color:string; createdAt:string; updatedAt:string };
-type DB = { documents:Document[]; annotations:Annotation[]; chats:any[]; todos:any[] };
-async function readDb():Promise<DB>{ try{return JSON.parse(await fs.readFile(dbPath,'utf8'));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;return {documents:[],annotations:[],chats:[],todos:[]};} }
-async function writeDb(db:DB,syncNotes=true){const temporary=dbPath+'.tmp';await fs.writeFile(temporary,JSON.stringify(db,null,2));await fs.rename(temporary,dbPath);if(syncNotes)await workspace.sync(db.documents,db.annotations)}
-function id(){return crypto.randomUUID()}
-function hash(text:string){return crypto.createHash('sha256').update(text).digest('hex').slice(0,16)}
-function sha256(data:Buffer|string){return crypto.createHash('sha256').update(data).digest('hex')}
-function extractHtml(html:string){ const dom=new JSDOM(html); dom.window.document.querySelectorAll('script,style,noscript,nav,footer').forEach(n=>n.remove()); return {title:dom.window.document.title || 'Untitled web document', text:(dom.window.document.body?.textContent||'').replace(/\s+/g,' ').trim(), snapshot:dom.serialize()}; }
-// Serialize document mutations so async downloads cannot overwrite concurrent edits.
-let mutationTail=Promise.resolve();
-app.use('/api',(req,res,next)=>{if(!['POST','PATCH','DELETE'].includes(req.method)||!/^\/(import|documents|annotations)(\/|$)/.test(req.path))return next();const previous=mutationTail;let release!:()=>void;mutationTail=new Promise<void>(resolve=>release=resolve);let finished=false;const finish=()=>{if(!finished){finished=true;release()}};res.once('finish',finish);res.once('close',finish);void previous.then(()=>{if(res.destroyed)return finish();next()})});
-app.get('/api/ui/events',(req,res)=>{const clientId=String(req.query.clientId||'');if(!clientId||clientId.length>128)return res.status(400).json({error:'clientId required'});res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache');res.flushHeaders();const disconnect=readerBridge.register(clientId,event=>res.write(`data: ${JSON.stringify(event)}\n\n`));const timer=setInterval(()=>res.write(': ping\n\n'),15000);req.on('close',()=>{clearInterval(timer);disconnect()})});
-app.post('/api/ui/state',(req,res)=>{const ok=readerBridge.update(req.body.clientId,req.body.state||{},req.body.active===true);res.status(ok?200:409).json({ok})});
-app.post('/api/ui/ack',(req,res)=>{const ok=readerBridge.acknowledge(req.body.clientId,req.body.id,req.body.result);res.status(ok?200:409).json({ok})});
-const existingData=await readDb();await workspace.sync(existingData.documents,existingData.annotations);
-const session=new CodexSession(root,()=>workspace.directory(),dataDir);
-app.get('/api/project',async(_req,res)=>res.json({directory:await workspace.directory()}));
-app.put('/api/project',async(req,res)=>{try{if(session.state.status==='running')return res.status(409).json({error:'请等待当前回答结束后切换目录'});const directory=await workspace.configure(String(req.body.directory||''));const db=await readDb();await workspace.sync(db.documents,db.annotations);res.json({directory})}catch(e){res.status(400).json({error:String(e)})}});
-app.get('/api/session/events',async(req,res)=>{res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache');res.flushHeaders();const send=(state:any)=>res.write(`data: ${JSON.stringify(state)}\n\n`);session.on('snapshot',send);send(session.state);const ping=setInterval(()=>res.write(': ping\n\n'),15000);req.on('close',()=>{clearInterval(ping);session.off('snapshot',send)});try{await session.connect();send(session.state)}catch(e){send({...session.state,status:'error',error:String(e)})}});
-app.post('/api/session/message',async(req,res)=>{try{const text=String(req.body.text||'').trim();if(!text)return res.status(400).json({error:'请输入消息'});const db=await readDb();const doc=db.documents.find(d=>d.id===req.body.documentId);await session.send(text,doc?{title:doc.title,content:doc.content,quote:req.body.quote,annotations:db.annotations.filter(a=>a.documentId===doc.id)}:undefined);res.json({ok:true})}catch(e){res.status(400).json({error:String(e)})}});
-app.post('/api/session/stop',async(_req,res)=>{try{await session.stop();res.json({ok:true})}catch(e){res.status(500).json({error:String(e)})}});
-app.post('/api/session/clear',async(_req,res)=>{try{await session.clear();res.json({ok:true})}catch(e){res.status(500).json({error:String(e)})}});
-app.get('/api/documents', async (_req,res)=>{const db=await readDb(); res.json(db.documents.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));});
-app.get('/api/documents/:id', async (req,res)=>{const db=await readDb(); const d=db.documents.find(x=>x.id===req.params.id); if(!d)return res.status(404).json({error:'Not found'}); res.json({...d,annotations:db.annotations.filter(a=>a.documentId===d.id)});});
-app.post('/api/import/url', async (req,res)=>{ const {url}=req.body; if(!url)return res.status(400).json({error:'URL required'}); try { const db=await readDb(); const normalized=canonicalUrl(url); const cached=db.documents.find(x=>{try{return canonicalUrl(x.source)===normalized}catch{return false}}); if(cached)return res.json({...cached,cached:true}); const response=await fetch(normalized,{signal:AbortSignal.timeout(45000)}); if(!response.ok) throw new Error(`Upstream returned ${response.status}`); const contentType=response.headers.get('content-type')||''; const isPdf=contentType.includes('application/pdf') || /\/pdf\//.test(new URL(url).pathname) || /\.pdf($|\?)/i.test(url); const arxiv=new URL(normalized).hostname==='arxiv.org'; let d:Document; if(isPdf){ const buffer=Buffer.from(await response.arrayBuffer());const duplicate=db.documents.find(d=>d.contentHash===sha256(buffer));if(duplicate)return res.json({...duplicate,cached:true}); const fileName=`${id()}.pdf`; await fs.writeFile(path.join(uploadsDir,fileName),buffer); let content='PDF uploaded. Select text in the preview and add an annotation.'; try { const parser=new PDFParse({data:buffer}); content=(await parser.getText()).text; await parser.destroy(); } catch {} const title=(url.match(/(?:abs|pdf)\/([^/?#]+)/)?.[1]||'Imported PDF').replace(/\.pdf$/i,''); d={id:id(),title,author:'',source:normalized,sourceType:arxiv?'arxiv':'pdf',tags:arxiv?['paper']:[],createdAt:new Date().toISOString(),progress:0,content,fileUrl:`/uploads/${fileName}`,mimeType:'application/pdf',contentHash:sha256(buffer)}; } else { const html=await response.text(); const parsed=extractHtml(html); d={id:id(),title:parsed.title,author:'',source:normalized,sourceType:arxiv?'arxiv':'web',tags:arxiv?['paper']:[],createdAt:new Date().toISOString(),progress:0,content:parsed.text,htmlSnapshot:parsed.snapshot,contentHash:sha256(html)}; } db.documents.push(d); await writeDb(db); res.json(d); } catch(e){res.status(400).json({error:e instanceof Error?e.message:'Unable to fetch URL'});} });
-app.post('/api/import/file', upload.single('file'), async (req,res)=>{ if(!req.file)return res.status(400).json({error:'File required'}); const ext=path.extname(req.file.originalname).toLowerCase();if(!['.pdf','.txt','.md'].includes(ext)){await fs.unlink(req.file.path);return res.status(400).json({error:'暂支持 PDF、TXT、Markdown 文件'})} const raw=await fs.readFile(req.file.path); const contentHash=sha256(raw); const db=await readDb(); const cached=db.documents.find(x=>x.contentHash===contentHash); if(cached){await fs.unlink(req.file.path).catch(()=>{}); return res.json({...cached,cached:true});} let content=''; if(ext==='.pdf'){try{const parser=new PDFParse({data:await raw}); content=(await parser.getText()).text; await parser.destroy();}catch{content='PDF uploaded. Select text in the preview and add an annotation.';}} else if(ext==='.epub'){content='EPUB uploaded. EPUB chapter rendering is queued for the next iteration. You can still annotate this document and export notes.';} else {content=await fs.readFile(req.file.path,'utf8');} const d:Document={id:id(),title:path.basename(req.file.originalname,ext),author:'',source:req.file.originalname,sourceType:ext==='.pdf'?'pdf':'web',tags:[],createdAt:new Date().toISOString(),progress:0,content,fileUrl:`/uploads/${path.basename(req.file.path)}`,mimeType:req.file.mimetype}; d.contentHash=contentHash; db.documents.push(d); await writeDb(db); res.json(d); });
-app.patch('/api/documents/:id', async(req,res)=>{const db=await readDb(); const d=db.documents.find(x=>x.id===req.params.id); if(!d)return res.status(404).json({error:'Not found'}); if(typeof req.body.title==='string')d.title=req.body.title;if(typeof req.body.progress==='number')d.progress=Math.min(1,Math.max(0,req.body.progress));await writeDb(db,typeof req.body.title==='string'); res.json(d);});
-app.delete('/api/documents/:id', async(req,res)=>{const db=await readDb(); const before=db.documents.length; db.documents=db.documents.filter(x=>x.id!==req.params.id); db.annotations=db.annotations.filter(x=>x.documentId!==req.params.id); if(db.documents.length===before)return res.status(404).json({error:'Not found'}); await writeDb(db); res.json({ok:true});});
-app.get('/api/documents/:id/annotations', async(req,res)=>{const db=await readDb(); res.json(db.annotations.filter(a=>a.documentId===req.params.id));});
-app.post('/api/annotations', async(req,res)=>{const body=req.body; const now=new Date().toISOString(); const a:Annotation={id:id(),documentId:body.documentId,quote:body.quote,textHash:hash(body.quote||''),location:body.location||'',page:body.page,domPath:body.domPath,cfi:body.cfi,note:body.note||'',aiAnswer:body.aiAnswer,color:body.color||'#f0b429',createdAt:now,updatedAt:now}; const db=await readDb(); db.annotations.push(a); await writeDb(db); res.json(a);});
-app.delete('/api/annotations/:id',async(req,res)=>{const db=await readDb();const before=db.annotations.length;db.annotations=db.annotations.filter(a=>a.id!==req.params.id);if(before===db.annotations.length)return res.status(404).json({error:'批注不存在'});await writeDb(db);res.json({ok:true})});
-app.patch('/api/annotations/:id', async(req,res)=>{const db=await readDb(); const a=db.annotations.find(x=>x.id===req.params.id); if(!a)return res.status(404).json({error:'Not found'}); Object.assign(a,req.body,{updatedAt:new Date().toISOString()}); await writeDb(db); res.json(a);});
-app.get('/api/documents/:id/export.md', async(req,res)=>{const db=await readDb(); const d=db.documents.find(x=>x.id===req.params.id); if(!d)return res.status(404).end(); const anns=db.annotations.filter(a=>a.documentId===d.id); const md=`---\ntitle: "${d.title.replaceAll('"','\\"')}"\nsource: "${d.source}"\ndocument_id: "${d.id}"\ntags: [${d.tags.join(', ')}]\n---\n\n# ${d.title}\n\n## Summary\n\n${d.content.slice(0,800)}\n\n## My annotations\n\n${anns.map(a=>`- **${a.quote}**\\n  ${a.note}`).join('\\n\\n')||'暂无批注。'}\n\n## AI discussion\n\n${anns.filter(a=>a.aiAnswer).map(a=>a.aiAnswer).join('\\n\\n')||'暂无 AI 对话。'}\n\n## Open questions\n\n`; res.setHeader('Content-Type','text/markdown; charset=utf-8'); res.setHeader('Content-Disposition',`attachment; filename="notes.md"; filename*=UTF-8''${encodeURIComponent(d.title)}.md`); res.send(md);});
-app.post('/mcp',async(req,res)=>{const {id,method,params={}}=req.body;const reply=(result:any)=>res.json({jsonrpc:'2.0',id,result});try{if(method==='initialize')return reply({protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'LitAnvil',version:'0.2.0'}});if(method==='ping')return reply({});if(id===undefined)return res.status(202).end();const db=await readDb();if(method==='tools/list')return reply({tools:[{name:'list_documents',description:'List imported documents and their IDs.',inputSchema:{type:'object',properties:{}}},{name:'get_annotations',description:'Read annotations for a document.',inputSchema:{type:'object',properties:{documentId:{type:'string'}},required:['documentId']}},...uiTools]});if(method==='tools/call'){let result:any;if(params.name==='control_reader')result=await readerBridge.command(params.arguments.action,params.arguments);else if(params.name==='get_reader_state')result=readerBridge.snapshots();else if(params.name==='list_documents')result=db.documents.map(({id,title,source})=>({id,title,source}));else if(params.name==='get_annotations')result=db.annotations.filter(a=>a.documentId===params.arguments?.documentId);else throw new Error('Unknown tool');return reply({content:[{type:'text',text:JSON.stringify(result)}],isError:result?.ok===false})}return res.json({jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}})}catch(e){return reply({content:[{type:'text',text:String(e)}],isError:true})}});
-app.use((error:Error,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{console.error(error);if(!res.headersSent)res.status(500).json({error:error.message||'服务器错误'})});
-const server=app.listen(port,'127.0.0.1',()=>console.log(`LitAnvil API listening on http://localhost:${port}`));
-for(const signal of ['SIGTERM','SIGINT'] as const)process.on(signal,()=>{session.close();server.close();setTimeout(()=>process.exit(0),500).unref()});
+type DB = LibraryDB;
+let notesSyncError: string | undefined;
+async function readDb(): Promise<DB> {
+  try {
+    return JSON.parse(await fs.readFile(dbPath, "utf8"));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    return { documents: [], annotations: [], chats: [], todos: [] };
+  }
+}
+async function syncNotes(db: DB) {
+  try {
+    await workspace.sync(
+      activeDocuments(db),
+      db.annotations.filter((annotation) => !annotation.deletedAt),
+    );
+    notesSyncError = undefined;
+  } catch (error) {
+    console.error("[Library] notes export failed", error);
+    notesSyncError = "数据已保存，但笔记同步失败，请检查笔记目录权限";
+  }
+  return notesSyncError ? { warning: notesSyncError } : undefined;
+}
+async function writeDb(db: DB, sync = true) {
+  const temporary = dbPath + ".tmp";
+  await fs.writeFile(temporary, JSON.stringify(db, null, 2));
+  await fs.rename(temporary, dbPath);
+  if (sync) return syncNotes(db);
+}
+const libraryClients = new Set<(event: unknown) => void>();
+let libraryRevision = 0;
+app.get("/api/library/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  libraryClients.add(send);
+  res.write(`data: ${JSON.stringify({ revision: libraryRevision })}\n\n`);
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => { clearInterval(timer); libraryClients.delete(send); });
+});
+app.use("/api", createLibraryRouter({
+  uploads: uploadsDir, read: readDb, write: writeDb,
+  onChange: () => {
+    libraryRevision++;
+    for (const client of libraryClients) client({ revision: libraryRevision });
+  },
+}));
+app.get("/api/ui/events", (req, res) => {
+  const clientId = String(req.query.clientId || "");
+  if (!clientId || clientId.length > 128)
+    return res.status(400).json({ error: "clientId required" });
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const disconnect = readerBridge.register(clientId, (event) =>
+    res.write(`data: ${JSON.stringify(event)}\n\n`),
+  );
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => {
+    clearInterval(timer);
+    disconnect();
+  });
+});
+app.post("/api/ui/state", (req, res) => {
+  const ok = readerBridge.update(
+    req.body.clientId,
+    req.body.state || {},
+    req.body.active === true,
+  );
+  res.status(ok ? 200 : 409).json({ ok });
+});
+app.post("/api/ui/ack", (req, res) => {
+  const ok = readerBridge.acknowledge(
+    req.body.clientId,
+    req.body.id,
+    req.body.result,
+  );
+  res.status(ok ? 200 : 409).json({ ok });
+});
+const existingData = await readDb();
+if (await migrateLibrary(existingData, uploadsDir)) await writeDb(existingData);
+else await syncNotes(existingData);
+const session = new AgentRuntime(root, () => workspace.directory(), dataDir);
+const agentRoutes = createAgentRouter(session, async (body) => {
+  const db = await readDb();
+  const doc = activeDocuments(db).find(
+    (document) => document.id === body.documentId,
+  );
+  return doc
+    ? {
+        title: doc.title,
+        content: doc.content,
+        quote: body.quote,
+        annotations: documentAnnotations(db, doc.id),
+      }
+    : undefined;
+});
+app.get("/api/live/events", async (req, res) => {
+  const clientId = String(req.query.clientId || "");
+  if (!clientId || clientId.length > 128) return res.status(400).json({ error: "clientId required" });
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (type: string, data: unknown) => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ type, data })}\n\n`); };
+  const agent = (data: unknown) => send("agent", data);
+  const library = (data: unknown) => send("library", data);
+  const disconnect = readerBridge.register(clientId, data => send("reader", data));
+  session.on("snapshot", agent);
+  libraryClients.add(library);
+  agent(session.state);
+  library({ revision: libraryRevision });
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => { clearInterval(timer); disconnect(); session.off("snapshot", agent); libraryClients.delete(library); });
+  try { await session.connect(); agent(session.state); }
+  catch (error) { agent({ ...session.state, status: "error", error: String(error) }); }
+});
+app.use("/api/agent", agentRoutes);
+app.use("/api/session", agentRoutes);
+app.get("/api/project", async (_req, res) =>
+  res.json({
+    directory: await workspace.directory(),
+    syncError: notesSyncError,
+  }),
+);
+app.put("/api/project", async (req, res) => {
+  try {
+    const result = await session.changeWorkspace(async () => {
+      const directory = await workspace.configure(String(req.body.directory || ""));
+      await syncNotes(await readDb());
+      return directory;
+    });
+    res.json({directory:result.value,syncError:notesSyncError,agentError:result.agentError});
+  } catch (e) {
+    res.status(400).json({ error: String(e) });
+  }
+});
+app.post("/mcp", async (req, res) => {
+  const { id, method, params = {} } = req.body;
+  const started = Date.now();
+  const reply = (result: any) => res.json({ jsonrpc: "2.0", id, result });
+  try {
+    if (method === "initialize")
+      return reply({
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "LitAnvil", version: "0.2.0" },
+      });
+    if (method === "ping") return reply({});
+    if (id === undefined) return res.status(202).end();
+    if (method === "tools/list") return reply({ tools: [...libraryTools, ...uiTools] });
+    if (method === "tools/call") {
+      let result: any;
+      if (params.name === "control_reader")
+        result = await readerBridge.command(
+          params.arguments?.action,
+          params.arguments || {},
+        );
+      else if (params.name === "get_reader_state")
+        result = await readerBridge.readStates();
+      else result = await callLibraryTool(params.name, params.arguments || {}, port);
+      console.info("[MCP] tool", { name: params.name, operation: params.arguments?.operation || params.arguments?.action, ok: result?.ok !== false, durationMs: Date.now() - started });
+      return reply({
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        isError: result?.ok === false,
+      });
+    }
+    return res.json({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: "Method not found" },
+    });
+  } catch (e) {
+    console.warn("[MCP] tool failed", { name: params.name, durationMs: Date.now() - started, error: String(e) });
+    return reply({
+      content: [{ type: "text", text: String(e) }],
+      isError: true,
+    });
+  }
+});
+app.use(
+  (
+    error: Error,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    console.error(error);
+    if (!res.headersSent)
+      res
+        .status((error as any).code === "LIMIT_FILE_SIZE" ? 413 : 500)
+        .json({
+          error:
+            (error as any).code === "LIMIT_FILE_SIZE"
+              ? "文件不能超过 100MB"
+              : error.message || "服务器错误",
+        });
+  },
+);
+const server = app.listen(port, "127.0.0.1", () =>
+  console.log(`LitAnvil API listening on http://localhost:${port}`),
+);
+let shuttingDown = false;
+for (const signal of ["SIGTERM", "SIGINT"] as const)
+  process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("[Shutdown] draining Agent session", {signal});
+    server.close();
+    server.closeAllConnections();
+    const deadline = setTimeout(() => {
+      console.error("[Shutdown] session flush timed out; inspect Agent persistence logs");
+      process.exit(1);
+    }, 10000);
+    void session.shutdown().then(() => {
+      clearTimeout(deadline);
+      console.log("[Shutdown] Agent session saved");
+      process.exit(0);
+    }, error => {
+      clearTimeout(deadline);
+      console.error("[Shutdown] Agent session could not be saved", error);
+      process.exit(1);
+    });
+  });

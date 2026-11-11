@@ -1,8 +1,20 @@
-import {Markdown} from "./Markdown";
+import {paneBounds, paneDefaults} from "../shared/reader-layout";
+import { downloadAnnotations } from "./document-download";
+import type {ExportFormat} from "../shared/document-export";
+import { pdfSelectionLocation } from "./pdf-text";
+import { API, api, assetUrl } from "./api";
+import { Dialog } from "./Dialog";
+import { TrashDialog } from "./TrashDialog";
+import { ResizeHandle } from "./ResizeHandle";
+import { usePaneLayout } from "./usePaneLayout";
+import { Markdown } from "./Markdown";
 import { Chat } from "./Chat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useReaderBridge } from "./useReaderBridge";
 import { PdfReader } from "./PdfReader";
+import { PageNavigation } from "./PageNavigation";
+import { useLibrarySync } from "./useLibrarySync";
+import { useReadingPosition } from "./useReadingPosition";
 
 type Doc = {
   id: string;
@@ -34,21 +46,10 @@ type QueueItem = {
   progress: number;
   message: string;
 };
-const API = "http://localhost:8787/api";
-
-async function api(path: string, init?: RequestInit) {
-  const r = await fetch(API + path, init);
-  if (!r.ok) {
-    const text = await r.text();
-    let message = text;
-    try {
-      message = JSON.parse(text).error || text;
-    } catch {}
-    throw new Error(message);
-  }
-  return r.json();
-}
 export function App() {
+  const sidebarSections = useRef<HTMLDivElement>(null);
+  const readerLayout = useRef<HTMLDivElement>(null);
+  const readerToolbar = useRef<HTMLDivElement>(null);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [error, setError] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -57,24 +58,43 @@ export function App() {
   const [url, setUrl] = useState("");
   const [query, setQuery] = useState("");
   const [importing, setImporting] = useState(false);
+  const navigationIntent = useRef(0);
+  const importCount = useRef(0);
   const [dark, setDark] = useState(
     () => localStorage.getItem("litanvil-theme") === "dark",
   );
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 900);
   const [documentsOpen, setDocumentsOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const panes = usePaneLayout(leftOpen, rightOpen);
   const [zoom, setZoom] = useState(1);
   const [selection, setSelection] = useState("");
   const [selectionLocation, setSelectionLocation] = useState("");
   const [note, setNote] = useState("");
   const [editingAnn, setEditingAnn] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
+  const annotationInput = useRef<HTMLTextAreaElement>(null);
+  const editingAnnotation = anns.find(annotation => annotation.id === editingAnn);
+  useEffect(() => { if (editingAnn) annotationInput.current?.focus({preventScroll:true}); }, [editingAnn]);
   const [annotationPending, setAnnotationPending] = useState(false);
   const [dir, setDir] = useState("");
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [notice, setNotice] = useState<{
+    id: string;
+    kind: "document" | "annotation";
+    message: string;
+  } | null>(null);
+  const [undoPending, setUndoPending] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectError, setProjectError] = useState("");
   const reader = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const warning = (event: Event) =>
+      setError((event as CustomEvent<string>).detail);
+    window.addEventListener("litanvil-warning", warning);
+    return () => window.removeEventListener("litanvil-warning", warning);
+  }, []);
   useEffect(() => {
     api("/documents")
       .then((items: Doc[]) => {
@@ -83,7 +103,7 @@ export function App() {
         const doc = items.find((d) => d.id === saved);
         if (doc) setSelected(doc);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => { console.warn("[Library] initial connection failed",e); setError("暂时无法连接文档库，恢复连接后将自动重试"); });
   }, []);
   useEffect(() => {
     if (selected) sessionStorage.setItem("litanvil-open-document", selected.id);
@@ -116,14 +136,12 @@ export function App() {
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
-  useEffect(() => {
-    if (!projectOpen) return;
-    const listener = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProjectOpen(false);
-    };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, [projectOpen]);
+  useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns,
+    onSynced:()=>{
+      setError(value=>value==="暂时无法连接文档库，恢复连接后将自动重试"?"":value);
+      if (!dir) void loadProject();
+    },
+  });
   useReaderBridge({
     docs,
     selected,
@@ -132,6 +150,10 @@ export function App() {
     zoom,
     reader,
     openDocument,
+    closeDocument,
+    annotationCount: anns.length,
+    paneLayout:panes.layout,
+    setPaneLayout:panes.apply,
     setZoom,
     setLeftOpen,
     setRightOpen,
@@ -157,6 +179,7 @@ export function App() {
   );
   async function importUrl(inputUrl = url) {
     if (!inputUrl) return;
+    const intent = ++navigationIntent.current;
     const item = {
       id: crypto.randomUUID(),
       url: inputUrl,
@@ -167,6 +190,7 @@ export function App() {
     setQueue((q) => [item, ...q]);
     setError("");
     setUrl("");
+    importCount.current++;
     setImporting(true);
     setQueue((q) =>
       q.map((x) =>
@@ -187,7 +211,7 @@ export function App() {
         body: JSON.stringify({ url: item.url }),
       });
       setDocs((x) => [d, ...x.filter((item) => item.id !== d.id)]);
-      openDocument(d);
+      if (intent === navigationIntent.current) openDocument(d);
       setQueue((q) =>
         q.map((x) =>
           x.id === item.id
@@ -206,15 +230,40 @@ export function App() {
         ),
       );
     } finally {
-      setImporting(false);
+      importCount.current = Math.max(0, importCount.current - 1);
+      setImporting(importCount.current > 0);
+    }
+  }
+  async function refreshLibrary() {
+    try {
+      setDocs(await api("/documents"));
+      if (selected) setAnns(await api(`/documents/${selected.id}/annotations`));
+    } catch (error) {
+      setError(String(error));
+    }
+  }
+  async function undoDelete() {
+    if (!notice || undoPending) return;
+    setUndoPending(true);
+    try {
+      await api(
+        `/${notice.kind === "document" ? "documents" : "annotations"}/${notice.id}/restore`,
+        { method: "POST" },
+      );
+      await refreshLibrary();
+      setNotice(null);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setUndoPending(false);
     }
   }
   async function deleteDocument(id: string) {
-    if (!window.confirm("删除这篇文档及其批注？")) return;
     try {
       await api(`/documents/${id}`, { method: "DELETE" });
       setDocs((xs) => xs.filter((x) => x.id !== id));
       if (selected?.id === id) closeDocument();
+      setNotice({ id, kind: "document", message: "文档已移入回收站" });
     } catch (e) {
       setError(String(e));
     }
@@ -222,6 +271,8 @@ export function App() {
   async function importFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    const intent = ++navigationIntent.current;
+    importCount.current++;
     setImporting(true);
     setError("");
     try {
@@ -229,42 +280,25 @@ export function App() {
       f.append("file", file);
       const d = await api("/import/file", { method: "POST", body: f });
       setDocs((x) => [d, ...x.filter((item) => item.id !== d.id)]);
-      openDocument(d);
+      if (intent === navigationIntent.current) openDocument(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : "上传失败");
     } finally {
-      setImporting(false);
+      importCount.current = Math.max(0, importCount.current - 1);
+      setImporting(importCount.current > 0);
       e.target.value = "";
     }
   }
   function capture() {
+    if (annotationPending) return;
     const sel = window.getSelection();
     if (!sel?.rangeCount || !reader.current?.contains(sel.anchorNode)) return;
     const text = sel.toString().trim();
     if (!text) return;
     const range = sel.getRangeAt(0);
-    const rects: any[] = [];
-    reader.current
-      .querySelectorAll<HTMLElement>(".pdf-page")
-      .forEach((page) => {
-        const bounds = page.getBoundingClientRect();
-        for (const r of range.getClientRects()) {
-          const x = Math.max(r.left, bounds.left),
-            y = Math.max(r.top, bounds.top),
-            right = Math.min(r.right, bounds.right),
-            bottom = Math.min(r.bottom, bounds.bottom);
-          if (right > x && bottom > y)
-            rects.push({
-              page: Number(page.dataset.page),
-              x: (x - bounds.left) / bounds.width,
-              y: (y - bounds.top) / bounds.height,
-              w: (right - x) / bounds.width,
-              h: (bottom - y) / bounds.height,
-            });
-        }
-      });
+    setEditingAnn(null);
     setSelection(text);
-    setSelectionLocation(JSON.stringify({ version: 1, rects }));
+    setSelectionLocation(JSON.stringify(pdfSelectionLocation(reader.current, range)));
     setNote("");
     setRightOpen(true);
   }
@@ -298,10 +332,14 @@ export function App() {
     }
   }
   function openDocument(document: Doc) {
+    navigationIntent.current++;
     setSelected(document);
+    if (document.sourceType === "arxiv" && !document.fileUrl && !importing)
+      void importUrl(document.source);
     if (window.innerWidth <= 900) setLeftOpen(false);
   }
   function closeDocument() {
+    navigationIntent.current++;
     sessionStorage.removeItem("litanvil-open-document");
     setSelected(null);
   }
@@ -310,6 +348,7 @@ export function App() {
       await api(`/annotations/${id}`, { method: "DELETE" });
       setAnns((items) => items.filter((a) => a.id !== id));
       if (editingAnn === id) setEditingAnn(null);
+      setNotice({ id, kind: "annotation", message: "批注已移入回收站" });
     } catch (e) {
       setError(String(e));
     }
@@ -331,37 +370,25 @@ export function App() {
       setAnnotationPending(false);
     }
   }
-  function exportJson() {
+  async function exportDocument(format:ExportFormat) {
     if (!selected) return;
-    const blob = new Blob(
-      [
-        JSON.stringify(
-          {
-            document: selected.title,
-            documentId: selected.id,
-            annotations: anns,
-          },
-          null,
-          2,
-        ),
-      ],
-      { type: "application/json" },
-    );
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${selected.title}-annotations.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    try { await downloadAnnotations(selected,format); }
+    catch(error) { setError(String(error)); }
   }
-  useEffect(() => {
-    api("/project")
-      .then((result) => {
-        setDir(result.directory);
-        setProjectDraft(result.directory);
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
-  async function chooseDir() {
+  async function loadProject() {
+    try {
+      const result=await api("/project");
+      setDir(result.directory);
+      setProjectDraft(result.directory);
+      if (result.syncError || result.agentError) setError(result.syncError || result.agentError);
+    } catch (error) {
+      console.warn("[Project] initial connection failed",error);
+      setError("暂时无法连接文档库，恢复连接后将自动重试");
+    }
+  }
+  useEffect(() => { void loadProject(); }, []);
+  async function chooseDir(event: React.MouseEvent<HTMLButtonElement>) {
+    event.currentTarget.focus();
     setProjectDraft(dir);
     setProjectError("");
     setProjectOpen(true);
@@ -375,58 +402,71 @@ export function App() {
       });
       setDir(result.directory);
       setProjectOpen(false);
+      if (result.syncError || result.agentError) setError(result.syncError || result.agentError);
     } catch (e) {
       setProjectError(String(e));
     }
   }
-  async function exportMd() {
-    if (selected)
-      window.open(`${API}/documents/${selected.id}/export.md`, "_blank");
-  }
-  function saveProgress(e: React.UIEvent<HTMLElement>) {
-    if (!selected) return;
-    const el = e.currentTarget;
-    const progress = Math.min(
-      1,
-      Math.max(
-        0,
-        el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight),
-      ),
-    );
-    if (Math.abs(progress - selected.progress) > 0.02) {
-      const next = { ...selected, progress };
-      setSelected(next);
-      setDocs((x) => x.map((d) => (d.id === next.id ? next : d)));
-      api(`/documents/${selected.id}`, {
+  const pagination = useReadingPosition({
+    id: selected?.id,
+    source: selected?.fileUrl ? assetUrl(selected.fileUrl) : undefined,
+    initialProgress: selected?.progress || 0,
+    reader,
+    persist: async (id, progress) => {
+      await api(`/documents/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ progress }),
-      }).catch(() => {});
-    }
-  }
+        keepalive: true,
+      });
+      setDocs(items => items.map(doc => doc.id === id ? { ...doc, progress } : doc));
+      setSelected(doc => doc?.id === id ? { ...doc, progress } : doc);
+    },
+  });
   return (
-    <div className={dark ? "app dark" : "app"}>
+    <div className={dark ? "app dark" : "app"} style={panes.style}>
       {projectOpen && (
-        <div className="modal-backdrop">
-          <section
-            className="project-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="笔记目录"
+        <Dialog title="笔记目录" onClose={() => setProjectOpen(false)}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveProject();
+            }}
           >
-            <h2>笔记目录</h2>
             <input
               autoFocus
               aria-label="目录路径"
               value={projectDraft}
-              onChange={(e) => setProjectDraft(e.target.value)}
+              onChange={(event) => setProjectDraft(event.target.value)}
             />
             {projectError && <p role="alert">{projectError}</p>}
-            <div>
-              <button onClick={() => setProjectOpen(false)}>取消</button>
-              <button onClick={saveProject}>保存</button>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setProjectOpen(false)}>
+                取消
+              </button>
+              <button type="submit">保存</button>
             </div>
-          </section>
+          </form>
+        </Dialog>
+      )}
+      {trashOpen && (
+        <TrashDialog
+          onClose={() => setTrashOpen(false)}
+          onRestored={async (id) => {
+            await refreshLibrary();
+            if (notice?.id === id) setNotice(null);
+          }}
+        />
+      )}
+      {notice && (
+        <div className="undo-notice" role="status">
+          <span>{notice.message}</span>
+          <button disabled={undoPending} onClick={undoDelete}>
+            撤销
+          </button>
+          <button aria-label="关闭撤销提示" onClick={() => setNotice(null)}>
+            ×
+          </button>
         </div>
       )}
       {error && (
@@ -456,6 +496,16 @@ export function App() {
             {dark ? "☀" : "◐"}
           </button>
         </div>
+        <ResizeHandle
+          className="header-resize"
+          orientation="horizontal"
+          label="顶部栏高度"
+          value={panes.layout.headerHeight}
+          min={paneBounds.headerHeight[0]}
+          max={paneBounds.headerHeight[1]}
+          defaultValue={paneDefaults.headerHeight}
+          onChange={(value) => panes.set("headerHeight", value)}
+        />
       </header>
       <div className={`layout ${selected ? "reader-shell" : "home-shell"}`}>
         {selected && leftOpen && (
@@ -540,90 +590,118 @@ export function App() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-          <nav className="document-nav">
-            <button
-              aria-expanded={documentsOpen}
-              className="document-toggle"
-              onClick={() => setDocumentsOpen((open) => !open)}
-            >
-              <span>{documentsOpen ? "▾" : "▸"} 全部文档</span>
-              <em>{docs.length}</em>
-            </button>
+          <div className="sidebar-sections" ref={sidebarSections}>
+            <nav className="document-nav">
+              <button
+                aria-expanded={documentsOpen}
+                className="document-toggle"
+                onClick={() => setDocumentsOpen((open) => !open)}
+              >
+                <span>{documentsOpen ? "▾" : "▸"} 全部文档</span>
+                <em>{docs.length}</em>
+              </button>
+              {documentsOpen && (
+                <div className="sidebar-documents">
+                  {filtered.map((d) => (
+                    <button
+                      key={d.id}
+                      title={d.title}
+                      className={selected?.id === d.id ? "active" : ""}
+                      onClick={() => openDocument(d)}
+                    >
+                      {d.title}
+                    </button>
+                  ))}
+                  {filtered.length === 0 && (
+                    <p className="sidebar-empty">暂无文档</p>
+                  )}
+                </div>
+              )}
+            </nav>
             {documentsOpen && (
-              <div className="sidebar-documents">
-                {filtered.map((d) => (
-                  <button
-                    key={d.id}
-                    title={d.title}
-                    className={selected?.id === d.id ? "active" : ""}
-                    onClick={() => openDocument(d)}
-                  >
-                    {d.title}
-                  </button>
-                ))}
-                {filtered.length === 0 && (
-                  <p className="sidebar-empty">暂无文档</p>
-                )}
-              </div>
+              <ResizeHandle
+                orientation="horizontal"
+                label="文档与批注分区"
+                value={panes.layout.documentShare}
+                min={paneBounds.documentShare[0]}
+                max={paneBounds.documentShare[1]}
+                defaultValue={paneDefaults.documentShare}
+                step={2}
+                pixelsPerUnit={() =>
+                  Math.max(
+                    1,
+                    (sidebarSections.current?.clientHeight || 100) / 100,
+                  )
+                }
+                onChange={(value) => panes.set("documentShare", value)}
+              />
             )}
-          </nav>
-          <div className="ann-list">
-            <div className="ann-head">
-              本篇批注 <span>{anns.length}</span>
-            </div>
-            {anns.map((a) => (
-              <div className="ann" key={a.id}>
-                <blockquote
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => jumpToAnnotation(a)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") jumpToAnnotation(a);
-                  }}
-                  title="跳转到批注位置"
-                >
-                  {a.quote || "高亮"}
-                </blockquote>
-                {editingAnn === a.id ? (
-                  <>
-                    <textarea
-                      className="ann-editor"
-                      value={editNote}
-                      onChange={(e) => setEditNote(e.target.value)}
-                    />
-                    <div className="ann-actions">
-                      <button
-                        disabled={annotationPending}
-                        onClick={() => updateAnnotation(a.id)}
-                      >
-                        保存
-                      </button>
-                      <button onClick={() => setEditingAnn(null)}>取消</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <Markdown className="annotation-content">{a.note || a.aiAnswer || "高亮"}</Markdown>
-                    <button
-                      className="ann-delete"
-                      onClick={() => deleteAnnotation(a.id)}
-                    >
-                      删除
-                    </button>
-                    <button
-                      className="ann-edit"
-                      onClick={() => {
-                        setEditingAnn(a.id);
-                        setEditNote(a.note || "");
-                      }}
-                    >
-                      编辑
-                    </button>
-                  </>
-                )}
+            <div className="ann-list">
+              <div className="ann-head">
+                本篇批注 <span>{anns.length}</span>
               </div>
-            ))}
+              {anns.map((a) => (
+                <div className="ann" key={a.id}>
+                  <blockquote
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => jumpToAnnotation(a)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") jumpToAnnotation(a);
+                    }}
+                    title="跳转到批注位置"
+                  >
+                    {a.quote || "高亮"}
+                  </blockquote>
+                  <Markdown className="annotation-content">
+                    {a.note || a.aiAnswer || "高亮"}
+                  </Markdown>
+                  <button
+                    className="ann-delete"
+                    disabled={annotationPending}
+                    onClick={() => deleteAnnotation(a.id)}
+                  >
+                    删除
+                  </button>
+                  <button
+                    className="ann-edit"
+                    disabled={annotationPending}
+                    onClick={() => {
+                      window.getSelection()?.removeAllRanges();
+                      setSelection("");
+                      setSelectionLocation("");
+                      setEditingAnn(a.id);
+                      setEditNote(a.note || "");
+                      setRightOpen(true);
+                      if (panes.narrow) setLeftOpen(false);
+                    }}
+                  >
+                    编辑
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
+          <ResizeHandle
+            className="sidebar-width-resize"
+            orientation="vertical"
+            label="左侧栏宽度"
+            value={panes.leftWidth}
+            min={paneBounds.leftWidth[0]}
+            max={
+              panes.narrow
+                ? Math.min(paneBounds.leftWidth[1], panes.width * 0.85)
+                : Math.max(
+                    paneBounds.leftWidth[0],
+                    Math.min(
+                      paneBounds.leftWidth[1],
+                      panes.width - (rightOpen ? panes.rightWidth : 0) - 268,
+                    ),
+                  )
+            }
+            defaultValue={paneDefaults.leftWidth}
+            onChange={(value) => panes.set("leftWidth", value)}
+          />
         </aside>
         <main>
           {!selected ? (
@@ -635,7 +713,7 @@ export function App() {
                   <i>开始共读</i>
                 </h1>
                 <div className="home-chat-panel">
-                  <Chat onImport={importUrl} />
+                  <Chat onImport={importUrl} composerHeight={panes.layout.composerHeight} onComposerResize={(height)=>panes.set("composerHeight",height)} />
                 </div>
                 <div className="home-import-state" aria-live="polite">
                   {importing && <span>正在导入文档…</span>}
@@ -645,16 +723,27 @@ export function App() {
                     <b>
                       全部文档 <span>{docs.length}</span>
                     </b>
-                    <label className="upload">
-                      ＋ 上传文档
-                      <input
-                        aria-label="上传文档"
-                        type="file"
-                        accept=".pdf,.txt,.md"
-                        disabled={importing}
-                        onChange={importFile}
-                      />
-                    </label>
+                    <div className="library-tools">
+                      <button
+                        className="trash-toggle"
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          setTrashOpen(true);
+                        }}
+                      >
+                        回收站
+                      </button>
+                      <label className="upload">
+                        ＋ 上传文档
+                        <input
+                          aria-label="上传文档"
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          disabled={importing}
+                          onChange={importFile}
+                        />
+                      </label>
+                    </div>
                   </div>
                   <input
                     className="library-search"
@@ -695,7 +784,7 @@ export function App() {
             </>
           ) : (
             <>
-              <div className="reader-top">
+              <div className="reader-top" ref={readerToolbar}>
                 <button className="back" onClick={() => closeDocument()}>
                   ← 文档库
                 </button>
@@ -711,6 +800,7 @@ export function App() {
                   <b>{selected.title}</b>
                 </div>
                 <div className="reader-actions">
+                  {pagination.total > 0 && <PageNavigation {...pagination} />}
                   <button
                     className="panel-toggle"
                     aria-expanded={rightOpen}
@@ -741,17 +831,30 @@ export function App() {
                   >
                     ＋
                   </button>
-                  <button onClick={exportMd}>↓ Markdown</button>
-                  <button onClick={exportJson}>JSON</button>
+                  <button onClick={()=>void exportDocument("markdown")}>↓ Markdown</button>
+                  <button onClick={()=>void exportDocument("json")}>JSON</button>
                 </div>
+                <ResizeHandle
+                  className="toolbar-resize"
+                  orientation="horizontal"
+                  label="阅读工具栏高度"
+                  value={panes.layout.toolbarHeight}
+                  startValue={() =>
+                    readerToolbar.current?.clientHeight ||
+                    panes.layout.toolbarHeight
+                  }
+                  min={paneBounds.toolbarHeight[0]}
+                  max={paneBounds.toolbarHeight[1]}
+                  defaultValue={paneDefaults.toolbarHeight}
+                  onChange={(value) => panes.set("toolbarHeight", value)}
+                />
               </div>
-              <div className="reader-layout">
+              <div className="reader-layout" ref={readerLayout}>
                 <article
                   className="paper"
                   data-document-id={selected.id}
                   ref={reader}
                   onMouseUp={capture}
-                  onScroll={saveProgress}
                 >
                   <div className="paper-meta">
                     <div className="eyebrow">
@@ -765,6 +868,8 @@ export function App() {
                         /^https?:\/\//.test(selected.source)
                           ? selected.source
                           : selected.fileUrl
+                            ? assetUrl(selected.fileUrl)
+                            : undefined
                       }
                       target="_blank"
                       rel="noreferrer"
@@ -775,20 +880,26 @@ export function App() {
                   {selected.sourceType === "arxiv" ? (
                     selected.fileUrl ? (
                       <PdfReader
-                        src={selected.fileUrl}
+                        src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}
                       />
                     ) : (
                       <div className="pdf-error">
-                        PDF 未准备好，无法打开阅读器。
+                        {importing ? (
+                          "正在准备 PDF…"
+                        ) : (
+                          <button onClick={() => importUrl(selected.source)}>
+                            重新下载 PDF
+                          </button>
+                        )}
                       </div>
                     )
                   ) : selected.sourceType === "pdf" ? (
                     selected.fileUrl ? (
                       <PdfReader
-                        src={selected.fileUrl}
+                        src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}
@@ -809,28 +920,77 @@ export function App() {
                     </div>
                   )}
                 </article>
+                {rightOpen && (
+                  <ResizeHandle
+                    className="reader-agent-resize"
+                    orientation={panes.narrow ? "horizontal" : "vertical"}
+                    label={
+                      panes.narrow ? "PDF 与 Agent 上下分区" : "右侧栏宽度"
+                    }
+                    value={
+                      panes.narrow ? panes.layout.readerShare : panes.rightWidth
+                    }
+                    min={panes.narrow ? paneBounds.readerShare[0] : paneBounds.rightWidth[0]}
+                    max={
+                      panes.narrow
+                        ? paneBounds.readerShare[1]
+                        : Math.max(
+                            paneBounds.rightWidth[0],
+                            Math.min(
+                              paneBounds.rightWidth[1],
+                              panes.width -
+                                (leftOpen ? panes.leftWidth : 0) -
+                                268,
+                            ),
+                          )
+                    }
+                    defaultValue={panes.narrow ? paneDefaults.readerShare : paneDefaults.rightWidth}
+                    direction={panes.narrow ? 1 : -1}
+                    step={panes.narrow ? 2 : 10}
+                    pixelsPerUnit={() =>
+                      panes.narrow
+                        ? Math.max(
+                            1,
+                            (readerLayout.current?.clientHeight || 100) / 100,
+                          )
+                        : 1
+                    }
+                    onChange={(value) =>
+                      panes.set(
+                        panes.narrow ? "readerShare" : "rightWidth",
+                        value,
+                      )
+                    }
+                  />
+                )}
                 <section className={`ai-panel ${rightOpen ? "" : "collapsed"}`}>
                   <Chat
+                    composerHeight={panes.layout.composerHeight}
+                    onComposerResize={(height)=>panes.set("composerHeight",height)}
                     documentId={selected.id}
-                    quote={selection}
+                    quote={editingAnnotation?.quote || selection}
                     onImport={importUrl}
                   >
-                    {selection && (
+                    {(selection || editingAnnotation) && (
                       <div className="selection-actions">
                         <textarea
+                          ref={annotationInput}
                           aria-label="批注内容"
                           placeholder="添加评论（留空即为高亮）"
-                          value={note}
-                          onChange={(e) => setNote(e.target.value)}
+                          value={editingAnnotation ? editNote : note}
+                          onChange={(e) => editingAnnotation ? setEditNote(e.target.value) : setNote(e.target.value)}
                         />
                         <button
                           disabled={annotationPending}
-                          onClick={() => saveAnnotation(note)}
+                          onClick={() => editingAnnotation ? updateAnnotation(editingAnnotation.id) : saveAnnotation(note)}
                         >
-                          {note.trim() ? "保存批注" : "保存高亮"}
+                          {editingAnnotation ? "保存修改" : note.trim() ? "保存批注" : "保存高亮"}
                         </button>
                         <button
+                          disabled={annotationPending}
                           onClick={() => {
+                            setEditingAnn(null);
+                            window.getSelection()?.removeAllRanges();
                             setSelection("");
                             setSelectionLocation("");
                             setNote("");

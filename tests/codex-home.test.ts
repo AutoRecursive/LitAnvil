@@ -1,0 +1,63 @@
+import {afterEach,beforeEach,expect,it} from 'vitest';
+import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
+import {prepareCodexHome,findLegacyRollout,linkLegacyRollout} from '../server/agent/codex-home';
+let root:string,account:string,workspace:string,storage:string,user:string;
+beforeEach(async()=>{
+  root=await fs.mkdtemp(path.join(os.tmpdir(),'litanvil-codex-home-'));
+  account=path.join(root,'account');workspace=path.join(root,'project','notes');storage=path.join(root,'storage');user=path.join(root,'user');
+  await fs.mkdir(account,{recursive:true});await fs.mkdir(workspace,{recursive:true});await fs.mkdir(path.join(root,'project','.git'));
+});
+afterEach(async()=>{await fs.rm(root,{recursive:true,force:true})});
+const environment=()=>({PATH:process.env.PATH,LITANVIL_CODEX_ACCOUNT_HOME:account,LITANVIL_USER_HOME:user});
+it('creates private configuration without copying global MCPs/plugins/instructions while sharing account storage',async()=>{
+  const auth=path.join(account,'auth.json');await fs.writeFile(auth,'{"fixture":"account"}',{mode:0o600});
+  const config=path.join(account,'config.toml');await fs.writeFile(config,'[mcp_servers.global_only]\ncommand="sentinel"\n');
+  await fs.writeFile(path.join(account,'AGENTS.md'),'global instructions sentinel');
+  const isolated=await prepareCodexHome(workspace,storage,environment());
+  expect(isolated.environment.CODEX_HOME).toBe(path.join(storage,'native-home'));
+  const ownConfig=await fs.readFile(path.join(isolated.home,'config.toml'),'utf8');
+  expect(ownConfig).not.toContain('global_only');expect(ownConfig).not.toContain('sentinel');
+  expect(ownConfig).toContain('[features]\napps = false');
+  expect(ownConfig).toContain('[skills.bundled]\nenabled = false');
+  expect(ownConfig).toContain(`[projects.${JSON.stringify(await fs.realpath(path.dirname(workspace)))}]`);
+  expect((await fs.stat(isolated.home)).mode&0o777).toBe(0o700);
+  expect((await fs.stat(path.join(isolated.home,'config.toml'))).mode&0o777).toBe(0o600);
+  expect(await fs.readlink(path.join(isolated.home,'auth.json'))).toBe(auth);
+  await fs.writeFile(path.join(isolated.home,'auth.json'),'{"fixture":"refreshed"}');
+  expect(JSON.parse(await fs.readFile(auth,'utf8')).fixture).toBe('refreshed');
+  expect(await fs.readFile(config,'utf8')).toContain('global_only');
+  await expect(fs.access(path.join(isolated.home,'AGENTS.md'))).rejects.toThrow();
+});
+it('disables standalone user skills, handles symlink cycles, and leaves project skills available',async()=>{
+  const global=path.join(user,'.agents','skills','global');await fs.mkdir(global,{recursive:true});await fs.writeFile(path.join(global,'SKILL.md'),'global');
+  await fs.symlink(path.join(user,'.agents','skills'),path.join(global,'cycle'));
+  const project=path.join(workspace,'.agents','skills','project');await fs.mkdir(project,{recursive:true});await fs.writeFile(path.join(project,'SKILL.md'),'project');
+  await fs.symlink(project,path.join(user,'.agents','skills','project-link'));
+  const isolated=await prepareCodexHome(workspace,storage,environment());
+  const config=await fs.readFile(path.join(isolated.home,'config.toml'),'utf8');
+  expect(config).toContain(`path=${JSON.stringify(path.join(global,'SKILL.md'))},enabled=false`);
+  expect(config).not.toContain('project-link');
+});
+it('does not overwrite an unexpected local credential file or silently switch accounts',async()=>{
+  await fs.writeFile(path.join(account,'auth.json'),'{}');
+  const isolated=await prepareCodexHome(workspace,storage,environment());
+  await fs.unlink(path.join(isolated.home,'auth.json'));await fs.writeFile(path.join(isolated.home,'auth.json'),'local account');
+  await expect(prepareCodexHome(workspace,storage,environment())).rejects.toThrow('共享账户不一致');
+  expect(await fs.readFile(path.join(isolated.home,'auth.json'),'utf8')).toBe('local account');
+});
+it('links only the chosen legacy rollout and keeps native updates shared without copying history',async()=>{
+  const id='01234567-1234-1234-1234-123456789abc';
+  const directory=path.join(account,'sessions','2026','11','10');await fs.mkdir(directory,{recursive:true});
+  const source=path.join(directory,`rollout-${id}.jsonl`);await fs.writeFile(source,'old history\n');await fs.writeFile(path.join(directory,'other.jsonl'),'unrelated history');
+  const isolated=await prepareCodexHome(workspace,storage,environment());
+  await linkLegacyRollout(isolated.home,account,id);
+  const target=path.join(isolated.home,path.relative(account,source));
+  expect(await fs.readlink(target)).toBe(source);
+  expect(await fs.readdir(path.dirname(target))).toEqual([path.basename(source)]);
+  await fs.appendFile(target,'new native event\n');expect(await fs.readFile(source,'utf8')).toContain('new native event');
+  await fs.appendFile(source,'outside native event\n');expect(await fs.readFile(target,'utf8')).toContain('outside native event');
+  await expect(findLegacyRollout(account,'../../malicious')).resolves.toBeUndefined();
+  const archived=path.join(account,'archived_sessions',path.basename(source));await fs.mkdir(path.dirname(archived));await fs.rename(source,archived);
+  await linkLegacyRollout(isolated.home,account,id);
+  expect(await fs.readFile(path.join(isolated.home,'archived_sessions',path.basename(source)),'utf8')).toContain('outside native event');
+});

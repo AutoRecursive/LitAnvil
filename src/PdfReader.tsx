@@ -1,5 +1,7 @@
+import { rectsFromTextRanges, repaintPdfPreviews, finishPdfTextSelection } from "./pdf-text";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
+import { TextLayerBuilder } from "pdfjs-dist/web/pdf_viewer.mjs";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -15,10 +17,11 @@ function paintAnnotations(container: HTMLElement, annotations: Annotation[]) {
   for (const annotation of annotations) {
     try {
       const anchor = JSON.parse(annotation.location);
-      for (const rect of anchor.rects || []) {
-        const page = container.querySelector<HTMLElement>(
-          `.pdf-page[data-page="${rect.page}"]`,
-        );
+      const exact = rectsFromTextRanges(container, anchor.textRanges);
+      const anchoredPages = new Set(exact.map(rect => rect.page));
+      const rects = [...exact, ...(anchor.rects || []).filter((rect: {page:number}) => !anchoredPages.has(rect.page))];
+      for (const rect of rects) {
+        const page = container.dataset.page === String(rect.page) ? container : container.querySelector<HTMLElement>(`.pdf-page[data-page="${rect.page}"]`);
         if (!page) continue;
         const mark = document.createElement("div");
         mark.className = "saved-highlight";
@@ -101,7 +104,7 @@ export const PdfReader = React.memo(
           });
           container.replaceChildren(...views.map((view) => view.element));
           setLoaded({ src, pages: views });
-          setStatus(`共 ${pdf.numPages} 页`);
+          setStatus("");
         } catch (error) {
           if (!cancelled) {
             setStatus("PDF 加载失败");
@@ -165,7 +168,8 @@ export const PdfReader = React.memo(
       paintAnnotations(container, annotationsRef.current);
       let cancelled = false;
       let rendering: ReturnType<pdfjsLib.PDFPageProxy["render"]> | undefined;
-      let textLayer: InstanceType<typeof pdfjsLib.TextLayer> | undefined;
+      const textLayers: TextLayerBuilder[] = [];
+      const selectionEvents = new AbortController();
       console.debug("[PDF] layout", {
         pages: loaded.pages.length,
         width,
@@ -191,20 +195,26 @@ export const PdfReader = React.memo(
               transform: [dpr, 0, 0, dpr, 0, 0],
             });
             await rendering.promise;
-            const content = await page.getTextContent();
             if (cancelled) return;
-            const layer = document.createElement("div");
-            layer.className = "textLayer";
+            // The viewer builder supplies selection boundary handling in addition to text geometry.
+            // Bare TextLayer rendering lets a drag into whitespace select unrelated positioned spans.
+            const textLayer = new TextLayerBuilder({pdfPage:page, abortSignal:selectionEvents.signal});
+            textLayers.push(textLayer);
+            const layer = textLayer.div;
             element.querySelector("canvas")?.remove();
             element.querySelector(".textLayer")?.remove();
             element.prepend(canvas, layer);
-            textLayer = new pdfjsLib.TextLayer({
-              textContentSource: content,
-              container: layer,
+            await textLayer.render({
               viewport,
+              images: undefined!,
+              // Preserve the text-node offsets used by previously saved version-2 anchors.
+              textContentParams:{includeMarkedContent:false, disableNormalization:false},
             });
-            await textLayer.render();
-            if (!cancelled) element.dataset.ready = "true";
+            if (!cancelled) {
+              element.dataset.ready = "true";
+              paintAnnotations(element, annotationsRef.current);
+              repaintPdfPreviews(element);
+            }
           }
         } catch (error) {
           if (!cancelled) {
@@ -216,7 +226,8 @@ export const PdfReader = React.memo(
       return () => {
         cancelled = true;
         rendering?.cancel();
-        textLayer?.cancel();
+        textLayers.forEach(layer => layer.cancel());
+        selectionEvents.abort();
       };
     }, [loaded, src, width, scale]);
 
@@ -225,8 +236,8 @@ export const PdfReader = React.memo(
         className="pdf-reader"
         data-source={loaded?.src === src ? src : undefined}
       >
-        <div className="pdf-status">{status}</div>
-        <div className="pdf-pages" ref={host} onMouseUp={onSelection} />
+        {status && <div className="pdf-status" role="status">{status}</div>}
+        <div className="pdf-pages" ref={host} onMouseUpCapture={event => finishPdfTextSelection(event.currentTarget,event.target,event.clientX,event.clientY)} onMouseUp={onSelection} />
       </div>
     );
   },

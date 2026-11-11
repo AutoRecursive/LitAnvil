@@ -1,12 +1,86 @@
-# LitAnvil MVP architecture
+# LitAnvil agent runtime
 
-The MVP keeps a stable HTTP API between the reader and storage/AI adapters.
+LitAnvil uses a local runtime with provider adapters, inspired by Happy's separation of native agent harnesses, session protocol and presentation. This implementation owns its protocol; it does not depend on Happy's frozen `happy-wire` session schema.
 
-- `server/index.ts` exposes document, annotation, chat-stream, and Markdown export endpoints.
-- The current persistence adapter is `data/db.json` plus `uploads/`, so local development works without provisioning Postgres/S3. The API shape is intentionally storage-neutral and can be moved to Postgres/S3 later.
-- A document is the source of truth for title, URL/file, normalized text, HTML snapshot, tags, and progress. An annotation stores `quote`, `textHash`, format-specific `location`, note, AI answer, and timestamps.
-- The browser directory connector writes one folder per paper with `paper.md` (source text + metadata) and `notes.md` (annotations + AI discussion). The server export remains available for agents.
-- AI requests are streamed over `/api/ai/stream`. The request includes the document title, selected quote, user question, and relevant existing annotations. A production adapter can route this request to multiple LLM backends or skills without changing the reader.
-- An agent workspace should index the selected notes directory with QMD (or another local index) and query only relevant notes. The reader does not load the entire vault on every request; it sends the selected passage plus retrieved context.
+```mermaid
+flowchart LR
+  UI[Shared Chat component] --> HTTP[Agent HTTP / multiplexed SSE]
+  HTTP --> Runtime[AgentRuntime: sessions, selection, journal]
+  Runtime --> Codex[Codex adapter]
+  Runtime --> Claude[Claude adapter]
+  Codex --> AppServer[Codex App Server JSON-RPC]
+  Claude --> SDK[Claude Agent SDK]
+  AppServer --> MCP[LitAnvil MCP]
+  SDK --> MCP
+  MCP --> Reader[Targeted reader bridge]
+  MCP --> Library[Validated library HTTP routes]
+```
 
-Recommended next storage adapters: Postgres for metadata/annotations, S3-compatible object storage for original files and HTML snapshots, and a provider registry for OpenAI-compatible, local, or skill-backed AI streams.
+## Boundaries
+
+- `shared/agent.ts` is the versioned, provider-neutral frontend contract. Items are messages, public reasoning summaries, tools or notices. Frontend components never parse Codex notifications or Claude SDK events.
+- `server/agent/provider.ts` defines connect/send/stop/clear/close. A new provider implements this adapter and registers its factory with the runtime.
+- `server/agent/providers/codex.ts` translates the native App Server transport in `codex-native.ts`. Existing Codex resume/reconnect behavior and native thread IDs are retained. `server/session.ts` is a compatibility export for native integrations/tests.
+- `server/agent/providers/claude.ts` runs the official Claude Agent SDK, streams partial text and tool input, reconciles final blocks by ID, resumes native sessions, interrupts in-progress turns, and polls idle native transcripts for outside updates. Thinking/signature blocks are excluded from the public projection.
+- `server/agent/runtime.ts` owns workspace/provider selection, revisions, snapshots and change journals. Selection is shared by connected clients; switching while a turn is running is rejected. A failed provider can be switched away from. Clear creates a new native context only for the selected provider.
+- `server/agent/http.ts` exposes the same routes for every provider. The document server supplies a context resolver; provider adapters know nothing about the PDF database or React.
+- `src/live.ts` shares one `/api/live/events` connection per tab for agent snapshots, targeted reader commands and library invalidation events. Display snapshots are cached for component remounts; reader commands are never replayed. A reconnect sends current agent/library state. This avoids HTTP/1 connection starvation when multiple readers are open.
+- `server/library-tools.ts` exposes document/annotation MCP operations through the same validated and serialized library routes used by the UI. Claude permissions derive from this tool catalog.
+- `server/ui-bridge.ts` and `src/useReaderBridge.ts` target one reader tab, authenticate acknowledgements by command/tab IDs, and wait for loaded PDF pages. Both providers use this MCP surface.
+
+## HTTP contract
+
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/api/live/events?clientId=ID` | Multiplexed `{type: "agent" \| "reader" \| "library", data}` events (frontend default) |
+| GET | `/api/library/events` | Dedicated library invalidation stream for integrations |
+| GET | `/api/agent/providers` | Available CLI binaries and provider capabilities |
+| GET | `/api/agent/state` | Current authoritative snapshot |
+| GET | `/api/agent/events` | SSE snapshots with session/revision event IDs |
+| GET | `/api/agent/history?after=N` | Provider journal records after revision N |
+| POST | `/api/agent/provider` | `{provider: "codex" \| "claude"}` switches/resumes that backend |
+| POST | `/api/agent/message` | `{text, documentId?, quote?}` starts a turn |
+| POST | `/api/agent/stop` | Interrupts the selected provider |
+| POST | `/api/agent/clear` | Starts a fresh selected-provider context |
+
+`/api/session/*` remains an alias for callers; its event payload is the new v1 contract. This is a protocol change from native Codex items. New consumers should use `/api/agent/*`.
+
+The dedicated `/api/agent/events` and `/api/ui/events` remain available for integrations. The app itself uses only the multiplexed stream. SSE reconnect sends the current full snapshot; clients do not have to reconstruct partial output from old network events. The revisioned change journal is separately available for diagnostics and replay consumers.
+
+## Persistence and account settings
+
+`data/agents/<workspace-hash>/selection.json` stores the selected backend. Each provider directory contains its native session metadata, `snapshot.json` and `events.ndjson`. Workspace and backend histories stay separate. Switching providers resumes that provider's own context; it does not transfer prompts or import the other provider's conversation. The default notes workspace migrates the original `data/session.json` Codex thread without removing the legacy file.
+
+The notes directory remains the agent working directory. Claude loads project settings only and explicitly receives the LitAnvil MCP server. `claude-auth.ts` reuses only allowlisted authentication environment values and the account model default (project model wins); credentials stay in process memory and are not written to the runtime journal or project config. Native CLI OAuth/keychain login remains available. Codex uses `server/agent/codex-home.ts` to create a private per-workspace/provider native home under ignored runtime storage. It loads trusted project `.codex/config.toml` and repo skills, with user-level config/plugins/MCPs absent and bundled skills/account connectors disabled by default. Standalone skills discovered from the user `.agents/skills` directory are explicitly disabled outside the project. System/organization policy layers still apply. A link to the existing file-based account store reuses login without copying secrets into project config. Only the selected original rollout is linked for legacy thread migration, so its events remain shared with the original native history; other histories are not exposed through a directory-wide link. New native contexts live in the project runtime home. Symlink support is required; file-based native auth (or inherited API-key environment) is supported, and keychain-only account migration is not implemented.
+
+The reader library routes live in `server/library.ts`: `data/db.json` stores documents and annotations, original files live in `uploads/`, and notes are exported atomically. A `deletedAt` marker preserves deleted records and original files for undo/recycle-bin recovery. Active library, context and MCP queries filter these records. URL aliases and original-file hashes back the import cache. PDF assets are resolved against the API origin. Annotation Markdown stays source text in JSON and is rendered through the same Markdown/KaTeX component as agent answers.
+
+## Validation and current scope
+
+Tests cover native Codex lifecycle/reconnect, canonical projections, streamed Claude text/tool reconciliation, SDK stop/resume, project/provider isolation, selection recovery, event history, failed-provider switching, credentials allowlisting, rendering, PDF sizing and document APIs. Native providers are injected in tests so middleware checks run without account access or model calls. Browser checks exercise real native agents separately.
+
+This is a localhost runtime and reader client. Cross-device relay, encrypted remote synchronization, arbitrary native-terminal takeover and a multi-session browsing UI are outside the current implementation. Claude idle transcript polling observes completed native changes; concurrently running the same native session from another tool is not a supported takeover mechanism.
+
+References: [Happy](https://github.com/slopus/happy), [Happy session protocol](https://github.com/slopus/happy/blob/main/packages/happy-wire/src/sessionProtocol.ts), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript).
+
+
+## PDF text locations
+
+`src/pdf-text.ts` maps normalized search offsets back to the original PDF text nodes. Version 2 annotation locations contain both normalized `rects` and `textRanges` (`page`, text-node index, `start`, `end`). After font metrics change on zoom/resize, the renderer rebuilds rectangles from text offsets once the page is ready. Existing version 1 rectangles remain the fallback. User selections and agent preview results use the same location representation; previews are never saved implicitly.
+
+
+Codex isolation follows the official [state/config locations](https://developers.openai.com/codex/config-advanced/) and [project configuration reference](https://developers.openai.com/codex/config-reference/). An empty CLI override table is insufficient: native configuration merges tables recursively, so isolation uses a separate home rather than attempting to erase the user's tables.
+
+
+## Chat actions and development isolation
+
+Frontend chat actions include expected session/workspace identifiers. The runtime serializes message admission and directory changes, rejects stale targets, and keeps stop available during native turn admission. Draft and failed-message recovery state lives in a per-tab external store so changing the presentation between homepage and PDF cannot lose asynchronous failure recovery.
+
+Development tooling ignores and denies serving the runtime data, notes, uploads and logs directories. Native plugin caches may contain third-party HTML/package/test files even while the plugins are disabled; these files must not trigger Vite reloads, become optimizer entrypoints or participate in project tests. A library live reconnect recovers a saved document after an initial backend outage and clears only its stale startup error.
+
+
+## Reader layout and exports
+
+`shared/reader-layout.ts` owns bounded pane preferences for both manual resizers and MCP. The reader bridge returns those preferences plus measured responsive DOM dimensions, waiting for layout stability before acknowledging geometry-changing actions. Browser page tracking also observes viewport size changes.
+
+`/api/documents/:id/export.json` and `export.md` read the same active annotation records used by the library. `shared/document-export.ts` handles filenames and format metadata. Both manual buttons and MCP reader download requests use `src/document-download.ts`; the backend export_document tool returns the same authoritative bytes and a download URL. A requested browser download and a completed filesystem save are distinct states.

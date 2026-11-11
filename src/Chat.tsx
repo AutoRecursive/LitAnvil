@@ -1,50 +1,84 @@
+import { chatDrafts, useChatDraft } from "./chat-draft";
+import { arxivLink } from "../shared/import-url";
+import { subscribeLive } from "./live";
 import React, { useEffect, useRef, useState } from "react";
-import {Markdown} from "./Markdown";
+import { Markdown } from "./Markdown";
+import { ResizeHandle } from "./ResizeHandle";
+import { paneBounds, paneDefaults } from "../shared/reader-layout";
 const API = "http://localhost:8787/api";
-type Snapshot = {
-  threadId: string | null;
-  status: string;
-  items: any[];
-  error: string | null;
-};
+import type { AgentSnapshot, AgentItem, ProviderInfo } from "../shared/agent";
 export function Chat({
   documentId,
   quote,
   onImport,
   children,
+  composerHeight = paneDefaults.composerHeight,
+  onComposerResize,
 }: {
   documentId?: string;
   quote?: string;
   onImport: (url: string) => void;
   children?: React.ReactNode;
+  composerHeight?: number;
+  onComposerResize?: (height: number) => void;
 }) {
-  const [state, setState] = useState<Snapshot>({
-    threadId: null,
+  const panel = useRef<HTMLElement>(null);
+  const [composerLimit, setComposerLimit] = useState(paneBounds.composerHeight[1]);
+  useEffect(() => {
+    const element = panel.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      setComposerLimit(Math.max(paneBounds.composerHeight[0], Math.min(paneBounds.composerHeight[1], element.clientHeight - 180)));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const inputHeight = Math.min(composerHeight, composerLimit);
+  const [state, setState] = useState<AgentSnapshot>({
+    protocolVersion: 1,
+    provider: "codex",
+    sessionId: "connecting",
+    workspace: "",
+    revision: 0,
+    turnId: null,
+    nativeSessionId: null,
     status: "connecting",
     items: [],
     error: null,
   });
-  const [draft, setDraft] = useState("");
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const {text:draft,unsent} = useChatDraft();
+  const setDraft = chatDrafts.setText;
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const requestLock = useRef<string | null>(null);
+  const stopLock = useRef(false);
+  const [stopping, setStopping] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const stream = new EventSource(API + "/session/events");
-    stream.onmessage = (e) => setState(JSON.parse(e.data));
-    stream.onerror = () => setState((s) => ({ ...s, status: "connecting" }));
-    return () => stream.close();
+    const unsubscribe = subscribeLive("agent", setState, { onError: () => setState(s => ({ ...s, status: "connecting" })) });
+    fetch(API + "/agent/providers")
+      .then((response) => {
+        if (!response.ok) throw new Error("无法读取 Agent 后端");
+        return response.json();
+      })
+      .then(setProviders)
+      .catch((error) => setError(String(error)));
+    return unsubscribe;
   }, []);
   useEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [state]);
   async function action(name: string, body: any = {}) {
+    if (name === "stop" ? stopLock.current : requestLock.current) return false;
+    if (name === "stop") { stopLock.current = true; setStopping(true); }
+    else { requestLock.current = name; setPending(name); }
     setError("");
-    setPending(true);
     try {
-      const r = await fetch(API + "/session/" + name, {
+      const r = await fetch(API + "/agent/" + name, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, expectedSessionId:state.sessionId, expectedWorkspace:state.workspace }),
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error);
@@ -53,32 +87,51 @@ export function Chat({
       setError(String(e));
       return false;
     } finally {
-      setPending(false);
+      if (name === "stop") { stopLock.current = false; setStopping(false); }
+      else { requestLock.current = null; setPending(null); }
     }
   }
+  const busy = state.status === "running";
+  const importLink = arxivLink(draft);
+  const connected = state.status !== "connecting" && Boolean(state.nativeSessionId);
+  const canSend = Boolean(draft.trim()) && !pending && !stopping && !busy && (Boolean(importLink) || connected);
   async function send() {
-    const text = draft.trim();
+    if (requestLock.current || stopLock.current || !canSend) return;
+    const text = chatDrafts.getSnapshot().text.trim();
     if (!text) return;
-    try {
-      const u = new URL(text);
-      if (
-        /^(www\.)?arxiv\.org$/.test(u.hostname) &&
-        /^\/(abs|pdf)\//.test(u.pathname)
-      ) {
-        onImport(text);
-        setDraft("");
-        return;
-      }
-    } catch {}
+    const link = arxivLink(text);
+    if (link) { onImport(link); setDraft(""); return; }
     setDraft("");
     const sent = await action("message", { text, documentId, quote });
-    if (!sent) setDraft((previous) => previous || text);
+    if (!sent) chatDrafts.failed(text);
   }
-  const busy = state.status === "running";
+  const providerLabel = state.provider === "claude" ? "Claude" : "Codex";
   return (
-    <section className="chat-session">
+    <section className="chat-session" ref={panel}>
       <div className="session-toolbar">
-        <b>Codex</b>
+        <select
+          className="provider-select"
+          aria-label="Agent 后端"
+          value={state.provider}
+          disabled={busy || Boolean(pending) || stopping || state.status === "connecting"}
+          onChange={(event) =>
+            action("provider", { provider: event.target.value })
+          }
+        >
+          {(providers.length
+            ? providers
+            : [{ id: state.provider, label: providerLabel, available: true }]
+          ).map((provider) => (
+            <option
+              key={provider.id}
+              value={provider.id}
+              disabled={!provider.available}
+            >
+              {provider.label}
+              {!provider.available ? "（未安装）" : ""}
+            </option>
+          ))}
+        </select>
         <span className="session-state">
           {busy
             ? "生成中"
@@ -89,7 +142,7 @@ export function Chat({
                 : "已连接"}
         </span>
         <button
-          disabled={pending || !state.threadId}
+          disabled={Boolean(pending) || stopping || !connected}
           onClick={() => action("clear")}
         >
           清空上下文
@@ -102,17 +155,35 @@ export function Chat({
         {state.items.map((item) => (
           <SessionItem key={item.id} item={item} />
         ))}
-        {busy && <div className="session-progress">Codex 正在处理…</div>}
+        {busy && (
+          <div className="session-progress">{providerLabel} 正在处理…</div>
+        )}
       </div>
       {(error || state.error) && (
         <div className="session-error" role="alert">
           {error || state.error}
         </div>
       )}
+      {unsent.length > 0 && <details className="session-tool failed unsent-messages">
+        <summary>未发送的消息 · {unsent.length}</summary>
+        {unsent.map((text,index)=><div key={index}><pre>{text}</pre><button onClick={()=>chatDrafts.restore(index)}>恢复到输入框</button></div>)}
+      </details>}
       <div className="composer">
+        {onComposerResize && <ResizeHandle
+          className="composer-resize"
+          orientation="horizontal"
+          label="输入区高度"
+          value={inputHeight}
+          min={paneBounds.composerHeight[0]}
+          max={composerLimit}
+          defaultValue={Math.min(paneDefaults.composerHeight, composerLimit)}
+          direction={-1}
+          onChange={onComposerResize}
+        />}
         {quote && <blockquote className="chat-quote">{quote}</blockquote>}
         {children}
         <textarea
+          style={onComposerResize ? {height:inputHeight} : undefined}
           aria-label="消息"
           placeholder={
             documentId ? "询问这篇论文…" : "问点什么，或粘贴 arXiv 链接"
@@ -126,17 +197,17 @@ export function Chat({
               !e.nativeEvent.isComposing
             ) {
               e.preventDefault();
-              if (!busy && !pending) void send();
+              if (canSend) void send();
             }
           }}
         />
         <div className="session-send">
           {busy ? (
-            <button onClick={() => action("stop")}>停止</button>
+            <button disabled={stopping || Boolean(pending && pending !== "message")} onClick={() => action("stop")}>{stopping ? "停止中…" : "停止"}</button>
           ) : (
             <button
               aria-label="发送消息"
-              disabled={pending || !draft.trim() || !state.threadId}
+              disabled={!canSend}
               onClick={send}
             >
               ↑
@@ -148,63 +219,53 @@ export function Chat({
   );
 }
 
-export function SessionItem({ item }: { item: any }) {
-  if (item.type === "userMessage")
-    return (
-      <div className="session-user">
-        {item.content
-          ?.filter(
-            (c: any) =>
-              c.type === "text" && !c.text.startsWith("Reference document"),
-          )
-          .map((c: any) => c.text)
-          .join("\n")}
-      </div>
-    );
-  if (item.type === "agentMessage")
-    return (
+export function SessionItem({ item }: { item: AgentItem }) {
+  if (item.type === "message")
+    return item.role === "user" ? (
+      <div className="session-user">{item.text}</div>
+    ) : (
       <div className="session-answer">
-        <Markdown>{item.text || ""}</Markdown>
+        <Markdown>{item.text}</Markdown>
       </div>
     );
-  if (item.type === "reasoning") {
-    const summary = item.summary?.join("\n");
-    return summary ? (
+  if (item.type === "reasoning")
+    return item.text ? (
       <details className="session-tool summary">
         <summary>过程摘要</summary>
-        <Markdown>{summary}</Markdown>
+        <Markdown>{item.text}</Markdown>
       </details>
     ) : null;
-  }
+  if (item.type === "notice")
+    return (
+      <div
+        className={
+          item.level === "error" ? "session-error" : "session-progress"
+        }
+      >
+        {item.text}
+      </div>
+    );
+  const format = (value: unknown) =>
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
     <details
       className={`session-tool ${item.status === "failed" ? "failed" : ""}`}
     >
       <summary>
-        {item.type === "commandExecution"
-          ? "命令"
-          : item.type === "mcpToolCall"
-            ? `${item.server} · ${item.tool}`
-            : item.type === "fileChange"
-              ? "文件变更"
-              : item.type === "webSearch"
-                ? "搜索"
-                : item.type}
+        {item.name}
         <span>
-          {item.status === "inProgress"
+          {item.status === "running"
             ? "运行中"
             : item.status === "failed"
               ? "失败"
-              : "完成"}
+              : item.status === "interrupted"
+                ? "已停止"
+                : "完成"}
         </span>
       </summary>
-      <pre>
-        {item.command ||
-          JSON.stringify(item.arguments || item.changes || {}, null, 2)}
-      </pre>
-      {item.aggregatedOutput && <pre>{item.aggregatedOutput}</pre>}
-      {item.error && <pre>{item.error.message}</pre>}
-      {item.result && <pre>{JSON.stringify(item.result, null, 2)}</pre>}
+      {item.input !== undefined && <pre>{format(item.input)}</pre>}
+      {item.output !== undefined && <pre>{format(item.output)}</pre>}
+      {item.error && <pre>{item.error}</pre>}
     </details>
   );
 }
