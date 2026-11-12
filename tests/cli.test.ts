@@ -7,7 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 const exec=promisify(execFile);
-const cli=path.resolve('bin/litanvil.mjs');
+const cli=path.resolve('bin/lita.mjs');
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 async function available(port:number) {
  const server=createServer();
@@ -17,7 +17,7 @@ async function available(port:number) {
 }
 it('installs a help entry point and rejects unknown commands',async()=>{
  const help=await exec(process.execPath,[cli,'--help'],{cwd:os.tmpdir()});
- expect(help.stdout).toContain('litanvil start');expect(help.stdout).toContain('litanvil open');
+ expect(help.stdout).toContain('lita start');expect(help.stdout).toContain('lita open');
  await expect(exec(process.execPath,[cli,'unknown'])).rejects.toMatchObject({code:1,stderr:expect.stringContaining('未知命令')});
 });
 it('owns background services, reuses starts, preserves occupied ports and shuts down sibling processes on failure',async(context)=>{

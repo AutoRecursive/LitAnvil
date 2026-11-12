@@ -20,14 +20,14 @@ Choose a notes directory from the header. Agent sessions are separated by direct
 Install the checkout as a local command (requires Node.js and the dependencies above):
 
 ```sh
-npm link
-litanvil start          # Build the web app, then run API and Web in the background
-litanvil open           # Start if needed and show the app in your default browser
-litanvil status
-litanvil stop
+npm run install-cli
+lita start          # Build the web app, then run API and Web in the background
+lita open           # Start if needed and show the app in your default browser
+lita status
+lita stop
 ```
 
-`litanvil start --open`, `restart`, `web` (alias for `open`), `logs` and `--help` are also available. Commands work from any directory. Web uses `http://localhost:5173`, API uses port 8787. Occupied ports are reported without closing unrelated processes. A small local supervisor owns the child processes, waits for readiness and forwards graceful shutdown. Repeated starts reuse the running service. Runtime metadata lives under `data/cli/`; logs are in `logs/service.log`. `npm unlink -g litanvil` removes the command; this installation points at the current checkout.
+`lita start --open`, `restart`, `web` (alias for `open`), `logs` and `--help` are also available. Commands work from any directory. Web uses `http://localhost:5173`, API uses port 8787. Occupied ports are reported without closing unrelated processes. A small local supervisor owns the child processes, waits for readiness and forwards graceful shutdown. Repeated starts reuse the running service. Runtime metadata lives under `data/cli/`; logs are in `logs/service.log`. `npm unlink -g lita` removes the command; this installation points at the current checkout.
 
 ## Reader
 

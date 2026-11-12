@@ -11,7 +11,7 @@ async function start() {
   if(!running) {
     try {
       const lock=JSON.parse(await fs.readFile(lockFile,'utf8'));
-      if(alive(lock.pid))throw new Error('服务管理进程正在启动或无法响应；请使用 litanvil status / logs 查看');
+      if(alive(lock.pid))throw new Error('服务管理进程正在启动或无法响应；请使用 lita status / logs 查看');
       await fs.unlink(lockFile);
     }catch(error){if(error.code!=='ENOENT')throw error;}
     await fs.mkdir(runtimeDir,{recursive:true,mode:0o700});
@@ -34,12 +34,12 @@ async function start() {
     if(current?.status==='running'){console.log(`LitAnvil 已启动：${webUrl}`);return;}
     if(state&&!alive(state.pid))throw new Error(`服务启动中断；日志：${logFile}`);
   }
-  throw new Error(`启动尚未完成，请运行 litanvil status；日志：${logFile}`);
+  throw new Error(`启动尚未完成，请运行 lita status；日志：${logFile}`);
 }
 async function stop() {
   const state=await readState();
   if(!state||!alive(state.pid)||state.status==='stopped'||state.status==='failed'){console.log('LitAnvil 已关闭');return;}
-  if(!await control(state,'stop'))throw new Error('管理进程无法响应，未向未知进程发送关闭信号；请查看 litanvil logs');
+  if(!await control(state,'stop'))throw new Error('管理进程无法响应，未向未知进程发送关闭信号；请查看 lita logs');
   const end=Date.now()+16000;
   while(Date.now()<end){
     await delay(100);const current=await readState();
@@ -62,7 +62,7 @@ try {
     case 'open': case 'web': await openWeb();break;
     case 'status': {const s=await control(await readState());console.log(s?`LitAnvil ${s.status} · ${webUrl} · PID ${s.pid}`:'LitAnvil 未运行');break;}
     case 'logs': {const log=await fs.readFile(logFile,'utf8').catch(error=>{if(error.code==='ENOENT')return '暂无日志';throw error});console.log(log.split('\n').slice(-100).join('\n'));break;}
-    case 'help': case '--help': case '-h': console.log(`LitAnvil CLI\n\n  litanvil start [--open]  后台启动 API 和 Web\n  litanvil stop            关闭 CLI 管理的服务\n  litanvil restart         重启服务\n  litanvil status          查看运行状态\n  litanvil open            启动服务并打开浏览器\n  litanvil logs            查看最近日志\n\n项目：${root}`);break;
-    default: throw new Error('未知命令，请运行 litanvil --help');
+    case 'help': case '--help': case '-h': console.log(`LitAnvil CLI\n\n  lita start [--open]  后台启动 API 和 Web\n  lita stop            关闭 CLI 管理的服务\n  lita restart         重启服务\n  lita status          查看运行状态\n  lita open            启动服务并打开浏览器\n  lita logs            查看最近日志\n\n项目：${root}`);break;
+    default: throw new Error('未知命令，请运行 lita --help');
   }
 }catch(error){console.error(error.message);process.exitCode=1;}
