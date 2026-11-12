@@ -15,10 +15,24 @@ The API listens on `127.0.0.1:8787`; Vite prints the frontend URL (default port 
 
 Choose a notes directory from the header. Agent sessions are separated by directory and provider. Switching providers resumes that provider's own conversation. Clearing context affects the selected provider only.
 
+## Local CLI
+
+Install the checkout as a local command (requires Node.js and the dependencies above):
+
+```sh
+npm link
+litanvil start          # Build the web app, then run API and Web in the background
+litanvil open           # Start if needed and show the app in your default browser
+litanvil status
+litanvil stop
+```
+
+`litanvil start --open`, `restart`, `web` (alias for `open`), `logs` and `--help` are also available. Commands work from any directory. Web uses `http://localhost:5173`, API uses port 8787. Occupied ports are reported without closing unrelated processes. A small local supervisor owns the child processes, waits for readiness and forwards graceful shutdown. Repeated starts reuse the running service. Runtime metadata lives under `data/cli/`; logs are in `logs/service.log`. `npm unlink -g litanvil` removes the command; this installation points at the current checkout.
+
 ## Reader
 
 - Import an arXiv URL from chat, or upload PDF / Markdown / text from the library.
-- Select PDF text and save a highlight or Markdown comment from the right composer. Comments support `$inline math$` and `$$display math$$`, with editing and deletion in the left panel.
+- Select PDF text and save a highlight or Markdown comment from the right composer. Comments support `$inline math$` and `$$display math$$`; the left panel opens the same right-side editor and provides deletion.
 - Drag panel boundaries to resize sidebars and document/annotation sections. At narrow widths the PDF/chat boundary adjusts their heights. The header and reader toolbar also have draggable lower edges.
 - Deleted documents and comments can be undone immediately or restored from the library recycle bin.
 - Double-click a separator to restore its default size; focused separators support arrow keys and Home. Layout dimensions are saved in this browser.
