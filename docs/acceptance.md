@@ -154,3 +154,8 @@
 - Added read-only Agent tools `search_knowledge` and `find_similar_papers`. Search results expose document ID, score, line, source and snippet; provider instructions require fetching the referenced document before making claims. Similarity excludes the current paper and is intended for “find related work” flows.
 - QMD failures are isolated to retrieval calls; normal chat, PDF reading and library operations continue. `LITANVIL_QMD=off` is available for deployments without QMD. No QMD skill, global index, or user-level collection is modified.
 - Tests cover project initialization, result normalization, current-paper exclusion, disabled mode and bounded integration behavior. Production build passes.
+
+## CLI Codex executable resolution (2026-11-12)
+- Background `lita` services now resolve `codex` to an executable path using the service environment before spawning the native app-server. This prevents macOS shell-only PATH differences from surfacing as `spawn codex ENOENT`.
+- If no executable is found, the error includes the effective PATH and the `CODEX_BIN` absolute-path override. A real `lita start` followed by `/api/agent/state` restored the existing native Codex session successfully.
+- Added provider-path regression coverage. Full suite: 114 tests across 29 files; production build passes.

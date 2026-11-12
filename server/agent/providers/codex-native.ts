@@ -1,5 +1,5 @@
 import { prepareCodexHome, linkLegacyRollout } from "../codex-home.js";
-import { readingInstructions } from "../provider.js";
+import { executable, readingInstructions } from "../provider.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import fs from "node:fs/promises";
@@ -119,10 +119,13 @@ export class CodexSession extends EventEmitter {
       if (this.closing) throw new Error("Codex 服务已停止");
       const isolated = this.transport ? undefined : await prepareCodexHome(workspace, this.storageDir);
       if (this.closing) throw new Error("Codex 服务已停止");
+      const environment: NodeJS.ProcessEnv = isolated?.environment || process.env;
+      const binary = await executable("codex", environment);
+      if (!binary) throw new Error(`找不到 Codex CLI。当前服务 PATH 为：${environment.PATH || "(空)"}；请先运行 command -v codex，或设置 CODEX_BIN 为绝对路径`);
       const child =
         this.transport?.() ||
         spawn(
-          process.env.CODEX_BIN || "codex",
+          binary,
           [
             "app-server",
             "--listen",
@@ -134,7 +137,7 @@ export class CodexSession extends EventEmitter {
             "-c",
             `mcp_servers.litanvil.args=${JSON.stringify([path.join(this.root, "server/mcp-stdio.mjs")])}`,
           ],
-          { cwd: workspace, stdio: "pipe", env: isolated?.environment },
+          { cwd: workspace, stdio: "pipe", env: environment },
         );
       this.child = child;
       connectedChild = child;

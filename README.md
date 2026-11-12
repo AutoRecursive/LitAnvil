@@ -29,6 +29,8 @@ lita stop
 
 `lita start --open`, `restart`, `web` (alias for `open`), `logs` and `--help` are also available. Commands work from any directory. Web uses `http://localhost:5173`, API uses port 8787. Occupied ports are reported without closing unrelated processes. A small local supervisor owns the child processes, waits for readiness and forwards graceful shutdown. Repeated starts reuse the running service. Runtime metadata lives under `data/cli/`; logs are in `logs/service.log`. `npm unlink -g lita` removes the command; this installation points at the current checkout.
 
+The CLI resolves the Codex executable before starting the Agent. If the Codex installation is outside the service PATH, set `CODEX_BIN` to its absolute path and rerun `npm run install-cli`; on macOS, `command -v codex` shows the path.
+
 ## Reader
 
 - Import an arXiv URL from chat, or upload PDF / Markdown / text from the library.
