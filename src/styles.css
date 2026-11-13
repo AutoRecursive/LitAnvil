@@ -121,6 +121,11 @@ main { min-width: 0; }
 .reader-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 8px var(--right-width,360px); overflow: hidden; }
 .reader-shell:has(.ai-panel.collapsed) .reader-layout { grid-template-columns: minmax(0,1fr); }
 .paper { min-height: 0; min-width: 0; overflow: auto; padding: 24px clamp(16px,2.5vw,40px) 40px; scrollbar-gutter: stable; overflow-anchor: none; overscroll-behavior: contain; }
+.paper-pdf { position: relative; }
+.pdf-floating-tools { position: sticky; top: 10px; z-index: 8; display: flex; justify-content: flex-end; align-items: center; gap: 4px; height: 0; margin: 0 auto; max-width: 920px; pointer-events: none; }
+.pdf-floating-tools > * { pointer-events: auto; }
+.pdf-floating-tools button { width: 32px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 90%, transparent); color: inherit; box-shadow: 0 3px 12px #0002; }
+.pdf-floating-tools .zoom-label { min-width: 44px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 90%, transparent); box-shadow: 0 3px 12px #0002; }
 .paper-meta { max-width: 920px; margin: 0 auto 24px; }
 .paper-meta h1 { margin: 10px 0; font-size: 28px; line-height: 1.2; letter-spacing: -.03em; }
 .paper-meta a { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }

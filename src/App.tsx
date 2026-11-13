@@ -827,29 +827,6 @@ export function App() {
                   >
                     {rightOpen ? "收起 Agent" : "展开 Agent"}
                   </button>
-                  <button
-                    aria-label="缩小"
-                    disabled={zoom <= 0.75}
-                    onClick={() =>
-                      setZoom((z) =>
-                        Math.max(0.75, Number((z - 0.1).toFixed(2))),
-                      )
-                    }
-                  >
-                    −
-                  </button>
-                  <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-                  <button
-                    aria-label="放大"
-                    disabled={zoom >= 1.8}
-                    onClick={() =>
-                      setZoom((z) =>
-                        Math.min(1.8, Number((z + 0.1).toFixed(2))),
-                      )
-                    }
-                  >
-                    ＋
-                  </button>
                   <button onClick={()=>void exportDocument("markdown")}>↓ Markdown</button>
                   <button onClick={()=>void exportDocument("json")}>JSON</button>
                 </div>
@@ -870,7 +847,7 @@ export function App() {
               </div>
               <div className="reader-layout" ref={readerLayout}>
                 <article
-                  className="paper"
+                  className={`paper ${selected.sourceType === "arxiv" || selected.sourceType === "pdf" ? "paper-pdf" : ""}`}
                   data-document-id={selected.id}
                   ref={reader}
                   onMouseUp={capture}
@@ -896,6 +873,13 @@ export function App() {
                       {selected.source}
                     </a>
                   </div>
+                  {(selected.sourceType === "arxiv" || selected.sourceType === "pdf") && selected.fileUrl && (
+                    <div className="pdf-floating-tools" role="toolbar" aria-label="PDF 缩放">
+                      <button aria-label="缩小" disabled={zoom <= 0.75} onClick={() => setZoom(z => Math.max(0.75, Number((z - 0.1).toFixed(2))))}>−</button>
+                      <span className="zoom-label">{Math.round(zoom * 100)}%</span>
+                      <button aria-label="放大" disabled={zoom >= 1.8} onClick={() => setZoom(z => Math.min(1.8, Number((z + 0.1).toFixed(2))))}>＋</button>
+                    </div>
+                  )}
                   {selected.sourceType === "arxiv" ? (
                     selected.fileUrl ? (
                       <PdfReader
