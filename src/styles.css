@@ -125,8 +125,8 @@ main { min-width: 0; }
 .paper-meta a { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .paper-body { max-width: 760px; margin: auto; font: 18px/1.85 Georgia,serif; }
 .paper-body p { margin: 0 0 1.2em; }
-.pdf-reader { width: 100%; min-width: 0; max-width: 920px; margin: 0 auto; padding: 8px 0 28px; background: #eee; border-radius: 10px; overflow-x: auto; overflow-y: hidden; }
-.pdf-pages { width: 100%; contain: inline-size; }
+.pdf-reader { width: 100%; min-width: 0; max-width: 920px; margin: 0 auto; padding: 8px 0 28px; background: #eee; border-radius: 10px; overflow: visible; }
+.pdf-pages { width: 100%; contain: inline-size; overflow: visible; }
 .pdf-status { width: max-content; margin: 0 auto 10px; padding: 6px 10px; border-radius: 20px; background: #202020; color: #fff; font-size: 11px; }
 .pdf-page { position: relative; flex-shrink: 0; max-width: none; margin: 0 auto 14px; overflow: hidden; background: #fff; border-radius: 3px; box-shadow: 0 1px 6px #0001; color-scheme: light; }
 .pdf-page canvas { display: block; width: 100%; height: 100%; }

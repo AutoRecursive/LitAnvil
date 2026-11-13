@@ -21,7 +21,9 @@ export function useLibrarySync<T extends Document, A>({ selected, setDocuments, 
     let timer: ReturnType<typeof setTimeout>;
     let retry = 1000;
     const refresh = async (request: number) => {
-      const documentId = current.current?.id || sessionStorage.getItem("litanvil-open-document") || undefined;
+      let persisted: string | undefined;
+      try { persisted = JSON.parse(localStorage.getItem("litanvil-reader-view") || "null")?.documentId; } catch {}
+      const documentId = current.current?.id || persisted || sessionStorage.getItem("litanvil-open-document") || undefined;
       try {
         const documents: T[] = await api("/documents");
         const exists = documents.some(document => document.id === documentId);
@@ -31,10 +33,13 @@ export function useLibrarySync<T extends Document, A>({ selected, setDocuments, 
         retry = 1000;
         setDocuments(documents);
         synced.current?.();
+        let currentPersisted: string | undefined;
+        try { currentPersisted = JSON.parse(localStorage.getItem("litanvil-reader-view") || "null")?.documentId; } catch {}
+        const currentSession = sessionStorage.getItem("litanvil-open-document") || undefined;
         // An old request must never reopen a reader the user closed or switched.
-        if (current.current?.id !== documentId && (current.current || sessionStorage.getItem("litanvil-open-document") !== documentId)) return;
+        if (current.current?.id !== documentId && (current.current || (currentPersisted || currentSession) !== documentId)) return;
         setSelected(previous => {
-          if (!previous) return sessionStorage.getItem("litanvil-open-document") === documentId
+          if (!previous) return (currentPersisted || currentSession) === documentId
             ? documents.find(document=>document.id===documentId) || null : null;
           if (previous.id !== documentId) return previous;
           const next = documents.find(document => document.id === previous.id);

@@ -107,6 +107,12 @@ it('restores the saved document when the initial library request fails and the l
  expect(container.querySelector('[role="alert"]')).toBeNull();
  warning.mockRestore();
 });
+it('restores the last reader document from persistent view state after a fresh session',async()=>{
+ localStorage.setItem('litanvil-reader-view',JSON.stringify({documentId:'B',zoom:1.25,leftOpen:false,rightOpen:true,documentsOpen:false}));
+ await act(async()=>root.render(<App/>));
+ expect(container.querySelector('.paper-meta h1')?.textContent).toBe('Paper B');
+ expect(container.querySelector('.reader-shell aside.collapsed')).not.toBeNull();
+});
 it('does not steal navigation when an earlier link import completes after the user closes the reader',async()=>{
  sessionStorage.setItem('litanvil-open-document','A');let complete!:(value:unknown)=>void;
  request.mockImplementation(async(url:string,init?:RequestInit)=>url.endsWith('/import/url')?new Promise(resolve=>{complete=resolve}):result(url.endsWith('/documents')?documents:url.endsWith('/project')?{directory:'/notes'}:[]));

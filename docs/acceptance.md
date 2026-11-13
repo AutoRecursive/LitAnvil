@@ -164,3 +164,8 @@
 - Reader controls now wrap into a dedicated action row at narrow widths; the page navigation keeps its own space and the 390px viewport has no horizontal overflow. The Agent selector is labeled, wider, and remains usable on the home page and reader sidebar; its status and clear-context control reflow without crowding.
 - The clear-context request now returns the authoritative new Agent snapshot. The frontend applies that snapshot immediately and clears the shared draft/unsent-message store, so backend history, visible transcript and input state disappear together.
 - Real 390px browser check measured a 120.75px reader toolbar, a 366px wrapped action row, no document overflow and a 318px Agent selector. Tests: 114 passed, 1 intentionally skipped due unavailable occupied-port fixture; production build passes.
+
+## Persistent reader view state (2026-11-13)
+- The last reader view is stored in local browser state: document ID, zoom, left/right panel state and document-section state. Each document already stores page/fraction/progress independently, so reopening the same document restores its scroll position after a refresh.
+- Library recovery consults persistent view state as well as session state. A successful reconnect can reopen the saved document; a late response after an explicit close is rejected and cannot steal navigation back. Agent provider/session history remains server-owned and resumes through the same project workspace.
+- Added a regression for fresh-session document restoration and the stale late-sync close race. Targeted reading-position and app-state tests pass; production build passes.

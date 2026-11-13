@@ -15,6 +15,7 @@ import { PdfReader } from "./PdfReader";
 import { PageNavigation } from "./PageNavigation";
 import { useLibrarySync } from "./useLibrarySync";
 import { useReadingPosition } from "./useReadingPosition";
+import { readReaderView, writeReaderView, readerViewDefaults } from "./view-state";
 
 type Doc = {
   id: string;
@@ -47,6 +48,7 @@ type QueueItem = {
   message: string;
 };
 export function App() {
+  const savedView = useRef(readReaderView()).current;
   const sidebarSections = useRef<HTMLDivElement>(null);
   const readerLayout = useRef<HTMLDivElement>(null);
   const readerToolbar = useRef<HTMLDivElement>(null);
@@ -63,11 +65,11 @@ export function App() {
   const [dark, setDark] = useState(
     () => localStorage.getItem("litanvil-theme") === "dark",
   );
-  const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 900);
-  const [documentsOpen, setDocumentsOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(() => savedView.leftOpen ?? window.innerWidth > 900);
+  const [documentsOpen, setDocumentsOpen] = useState(() => savedView.documentsOpen ?? readerViewDefaults.documentsOpen);
+  const [rightOpen, setRightOpen] = useState(() => savedView.rightOpen ?? readerViewDefaults.rightOpen);
   const panes = usePaneLayout(leftOpen, rightOpen);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => typeof savedView.zoom === "number" ? Math.max(.75, Math.min(1.8, savedView.zoom)) : readerViewDefaults.zoom);
   const [selection, setSelection] = useState("");
   const [selectionLocation, setSelectionLocation] = useState("");
   const [note, setNote] = useState("");
@@ -89,6 +91,7 @@ export function App() {
   const [projectDraft, setProjectDraft] = useState("");
   const [projectError, setProjectError] = useState("");
   const reader = useRef<HTMLDivElement>(null);
+  const viewHydrated = useRef(false);
   useEffect(() => {
     const warning = (event: Event) =>
       setError((event as CustomEvent<string>).detail);
@@ -99,15 +102,23 @@ export function App() {
     api("/documents")
       .then((items: Doc[]) => {
         setDocs(items);
-        const saved = sessionStorage.getItem("litanvil-open-document");
+        const saved = localStorage.getItem("litanvil-reader-view") ? readReaderView().documentId : sessionStorage.getItem("litanvil-open-document");
         const doc = items.find((d) => d.id === saved);
         if (doc) setSelected(doc);
+        viewHydrated.current = true;
       })
       .catch((e) => { console.warn("[Library] initial connection failed",e); setError("暂时无法连接文档库，恢复连接后将自动重试"); });
   }, []);
   useEffect(() => {
-    if (selected) sessionStorage.setItem("litanvil-open-document", selected.id);
+    if (selected) {
+      sessionStorage.setItem("litanvil-open-document", selected.id);
+      if (viewHydrated.current) writeReaderView({ ...readReaderView(), documentId: selected.id, zoom, leftOpen, rightOpen, documentsOpen });
+    }
   }, [selected?.id]);
+  useEffect(() => {
+    if (!viewHydrated.current) return;
+    writeReaderView({ ...readReaderView(), documentId: selected?.id, zoom, leftOpen, rightOpen, documentsOpen });
+  }, [selected?.id, zoom, leftOpen, rightOpen, documentsOpen]);
   useEffect(() => {
     localStorage.setItem("litanvil-theme", dark ? "dark" : "light");
   }, [dark]);
@@ -341,6 +352,7 @@ export function App() {
   function closeDocument() {
     navigationIntent.current++;
     sessionStorage.removeItem("litanvil-open-document");
+    writeReaderView({ ...readReaderView(), documentId: undefined });
     setSelected(null);
   }
   async function deleteAnnotation(id: string) {
