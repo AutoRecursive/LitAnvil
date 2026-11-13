@@ -82,6 +82,10 @@ export function Chat({
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error);
+      if (name === "clear") {
+        if (result?.state) setState(result.state);
+        chatDrafts.clear();
+      }
       return true;
     } catch (e) {
       setError(String(e));
@@ -109,7 +113,8 @@ export function Chat({
   return (
     <section className="chat-session" ref={panel}>
       <div className="session-toolbar">
-        <select
+        <label className="provider-control">
+        <span className="provider-caption">Agent</span><select
           className="provider-select"
           aria-label="Agent 后端"
           value={state.provider}
@@ -131,7 +136,7 @@ export function Chat({
               {!provider.available ? "（未安装）" : ""}
             </option>
           ))}
-        </select>
+        </select></label>
         <span className="session-state">
           {busy
             ? "生成中"

@@ -18,6 +18,7 @@ export const chatDrafts = {
   getSnapshot:()=>snapshot,
   subscribe:(listener:()=>void)=>{ if(!listeners.size)read(); listeners.add(listener); return ()=>{listeners.delete(listener)}; },
   setText:(text:string)=>update({...snapshot,text}),
+  clear:()=>update({text:"",unsent:[]}),
   failed:(text:string)=>{
     if (!snapshot.text) update({...snapshot,text});
     else if(snapshot.text!==text && !snapshot.unsent.includes(text)) update({...snapshot,unsent:[...snapshot.unsent,text]});

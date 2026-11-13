@@ -790,6 +790,7 @@ export function App() {
                 </button>
                 <button
                   className="panel-toggle"
+                  data-panel="directory"
                   aria-expanded={leftOpen}
                   onClick={() => setLeftOpen((v) => !v)}
                 >
@@ -803,6 +804,7 @@ export function App() {
                   {pagination.total > 0 && <PageNavigation {...pagination} />}
                   <button
                     className="panel-toggle"
+                    data-panel="agent"
                     aria-expanded={rightOpen}
                     onClick={() => setRightOpen((v) => !v)}
                   >

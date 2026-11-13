@@ -72,7 +72,7 @@ export function createAgentRouter(
     router.post("/" + action, async (req, res) => {
       try {
         await runtime[action](target(req.body));
-        res.json({ ok: true });
+        res.json({ ok: true, state: runtime.state });
       } catch (error) {
         res.status(500).json({ error: String(error) });
       }

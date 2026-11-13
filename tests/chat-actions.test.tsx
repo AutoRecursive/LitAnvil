@@ -46,3 +46,10 @@ it('allows one stop during an unacknowledged send and disables repeated stop req
  expect(host.textContent).toContain('停止中');
  await act(async()=>{stopFinish(response({ok:true}));sendFinish(response({ok:true}));live.receive!(state())});
 });
+it('clears the visible transcript and drafts from the same clear action that resets the backend session',async()=>{
+ await mount(state({items:[{id:'m',type:'message',role:'assistant',text:'old answer'}]}));await type('draft to clear');
+ request.mockImplementation(async(url:string)=>url.endsWith('/clear')?response({ok:true,state:state({sessionId:'codex:new',nativeSessionId:'new',items:[],revision:2})}):response([]));
+ await act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='清空上下文')!.click());
+ expect(request).toHaveBeenCalledWith(expect.stringContaining('/clear'),expect.objectContaining({method:'POST'}));
+ expect(host.textContent).not.toContain('old answer');expect(chatDrafts.getSnapshot()).toEqual({text:'',unsent:[]});expect(host.textContent).toContain('有什么想一起研究的？');
+});

@@ -159,3 +159,8 @@
 - Background `lita` services now resolve `codex` to an executable path using the service environment before spawning the native app-server. This prevents macOS shell-only PATH differences from surfacing as `spawn codex ENOENT`.
 - If no executable is found, the error includes the effective PATH and the `CODEX_BIN` absolute-path override. A real `lita start` followed by `/api/agent/state` restored the existing native Codex session successfully.
 - Added provider-path regression coverage. Full suite: 114 tests across 29 files; production build passes.
+
+## Responsive chat controls and clear-context synchronization (2026-11-13)
+- Reader controls now wrap into a dedicated action row at narrow widths; the page navigation keeps its own space and the 390px viewport has no horizontal overflow. The Agent selector is labeled, wider, and remains usable on the home page and reader sidebar; its status and clear-context control reflow without crowding.
+- The clear-context request now returns the authoritative new Agent snapshot. The frontend applies that snapshot immediately and clears the shared draft/unsent-message store, so backend history, visible transcript and input state disappear together.
+- Real 390px browser check measured a 120.75px reader toolbar, a 366px wrapped action row, no document overflow and a 318px Agent selector. Tests: 114 passed, 1 intentionally skipped due unavailable occupied-port fixture; production build passes.
