@@ -92,6 +92,7 @@ export function App() {
   const [projectError, setProjectError] = useState("");
   const reader = useRef<HTMLDivElement>(null);
   const viewHydrated = useRef(false);
+  const [libraryReady, setLibraryReady] = useState(false);
   useEffect(() => {
     const warning = (event: Event) =>
       setError((event as CustomEvent<string>).detail);
@@ -106,8 +107,9 @@ export function App() {
         const doc = items.find((d) => d.id === saved);
         if (doc) setSelected(doc);
         viewHydrated.current = true;
+        setLibraryReady(true);
       })
-      .catch((e) => { console.warn("[Library] initial connection failed",e); setError("暂时无法连接文档库，恢复连接后将自动重试"); });
+      .catch((e) => { console.warn("[Library] initial connection failed",e); if (!savedView.documentId) setLibraryReady(true); setError("暂时无法连接文档库，恢复连接后将自动重试"); });
   }, []);
   useEffect(() => {
     if (selected) {
@@ -149,6 +151,7 @@ export function App() {
   }, []);
   useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns,
     onSynced:()=>{
+      setLibraryReady(true);
       setError(value=>value==="暂时无法连接文档库，恢复连接后将自动重试"?"":value);
       if (!dir) void loadProject();
     },
@@ -716,7 +719,9 @@ export function App() {
           />
         </aside>
         <main>
-          {!selected ? (
+          {!selected && savedView.documentId && !libraryReady ? (
+            <div className="reader-recovery" role="status">正在恢复上次阅读位置…</div>
+          ) : !selected ? (
             <>
               <div className="welcome chat-home">
                 <h1>

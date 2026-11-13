@@ -41,6 +41,7 @@ main { min-width: 0; }
 .home-shell { grid-template-columns: 1fr; }
 .home-shell aside { display: none; }
 .home-shell main { display: flex; justify-content: center; }
+.reader-recovery { display: grid; place-items: center; min-height: 60vh; color: var(--muted); font-size: 13px; }
 .welcome.chat-home { width: min(800px,100%); padding: 36px 24px; }
 .chat-home h1 { margin: 16px 0 22px; font-size: clamp(32px,4vw,46px); font-weight: 500; line-height: 1.15; letter-spacing: -.04em; }
 .chat-home h1 i { font-style: normal; }
