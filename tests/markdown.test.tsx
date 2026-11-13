@@ -14,3 +14,14 @@ it('keeps raw HTML inert and preserves invalid formula source without crashing',
   const html=renderToStaticMarkup(<Markdown>{'<script>alert(1)</script>\n\n$\\frac{1}{$'}</Markdown>);
   expect(html).not.toContain('<script>');expect(html).toContain('katex-error');expect(html).toContain('frac');
 });
+
+it('accepts common LaTeX delimiters emitted by agents while leaving fenced code untouched',()=>{
+  const source = String.raw`Inline \(x^2\) and display:
+\[
+E = mc^2
+\]
+
+` + "```text\n\\(keep raw\\)\n```";
+  const html=renderToStaticMarkup(<Markdown>{source}</Markdown>);
+  expect(html).toContain('katex-display');expect(html).toContain('x^2');expect(html).toContain('\\(keep raw\\)');
+});
