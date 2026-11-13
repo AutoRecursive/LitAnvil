@@ -1006,6 +1006,14 @@ export function App() {
                           {editingAnnotation ? "保存修改" : note.trim() ? "保存批注" : "保存高亮"}
                         </button>
                         <button
+                          className="selection-clear"
+                          aria-label="清空评论"
+                          disabled={annotationPending || !(editingAnnotation ? editNote : note)}
+                          onClick={() => editingAnnotation ? setEditNote("") : setNote("")}
+                        >
+                          清空评论
+                        </button>
+                        <button
                           disabled={annotationPending}
                           onClick={() => {
                             setEditingAnn(null);
