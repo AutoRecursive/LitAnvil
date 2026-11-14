@@ -7,6 +7,9 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 
 export class CodexSession extends EventEmitter {
+  // Match the model selected by the ChatGPT/Codex desktop account. Override
+  // with LITANVIL_CODEX_MODEL when the account exposes a different model.
+  readonly model = process.env.LITANVIL_CODEX_MODEL || "gpt-6.1-terra";
   child?: ChildProcessWithoutNullStreams;
   ready?: Promise<void>;
   pending = new Map<
@@ -176,15 +179,27 @@ export class CodexSession extends EventEmitter {
       }
       if (saved.threadId) {
         if (isolated) await linkLegacyRollout(isolated.home,isolated.accountHome,saved.threadId,saved.rolloutPath);
-        const response = await this.request("thread/resume", {
-          threadId: saved.threadId,
-          cwd: workspace,
-          developerInstructions: readingInstructions,
-          approvalPolicy: "never",
-          sandbox: "read-only",
-        });
-        this.hydrate(response.thread);
-        await this.saveThread(response.thread);
+        try {
+          const response = await this.request("thread/resume", {
+            threadId: saved.threadId,
+            cwd: workspace,
+            model: this.model,
+            developerInstructions: readingInstructions,
+            approvalPolicy: "never",
+            sandbox: "read-only",
+          });
+          this.hydrate(response.thread);
+          await this.saveThread(response.thread);
+        } catch (error) {
+          // A persisted Codex thread can disappear after a service reset or
+          // when its rollout file is no longer available. Starting a fresh
+          // thread is recoverable and prevents an endless reconnect loop.
+          this.log("thread_resume_failed", {
+            threadId: saved.threadId,
+            error: String(error),
+          });
+          await this.newThread();
+        }
       } else await this.newThread();
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -238,6 +253,7 @@ export class CodexSession extends EventEmitter {
   async newThread() {
     const r = await this.request("thread/start", {
       cwd: await this.workspace(),
+      model: this.model,
       sandbox: "read-only",
       approvalPolicy: "never",
       ephemeral: false,
@@ -333,6 +349,7 @@ export class CodexSession extends EventEmitter {
         const response = await this.request("turn/start", {
           threadId,
           cwd: await this.workspace(),
+          model: this.model,
           input: [
             { type: "text", text, text_elements: [] },
             ...(document

@@ -737,9 +737,15 @@ export function App() {
                   >
                     {a.quote || "高亮"}
                   </blockquote>
-                  <Markdown className="annotation-content">
-                    {a.note || a.aiAnswer || "高亮"}
-                  </Markdown>
+                  <details className="ann-details">
+                    <summary>
+                      <span>{a.note || a.aiAnswer ? "批注内容" : "高亮"}</span>
+                      <span className="ann-details-hint">展开 / 折叠</span>
+                    </summary>
+                    <Markdown className="annotation-content">
+                      {a.note || a.aiAnswer || "高亮"}
+                    </Markdown>
+                  </details>
                   <button
                     className="ann-delete"
                     disabled={annotationPending}

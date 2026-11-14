@@ -21,7 +21,7 @@ const port = Number(process.env.PORT || 8787);
 const root = process.cwd();
 const dataDir = process.env.LITANVIL_DATA_DIR || path.join(root, "data");
 await fs.mkdir(dataDir, { recursive: true });
-const dbPath = path.join(dataDir, "db.json");
+const legacyDbPath = path.join(dataDir, "db.json");
 const workspace = new ProjectWorkspace(
   dataDir,
   path.join(process.env.LITANVIL_DATA_DIR || root, "notes"),
@@ -40,11 +40,21 @@ app.use("/uploads", express.static(uploadsDir));
 type DB = LibraryDB;
 let notesSyncError: string | undefined;
 async function readDb(): Promise<DB> {
+  let canonicalPath: string | undefined;
+  try { canonicalPath = path.join(await workspace.stateDirectory(), "library.json"); } catch {}
   try {
-    return JSON.parse(await fs.readFile(dbPath, "utf8"));
+    // Keep the legacy mirror readable for existing tooling and older installs.
+    // It is preferred when present so manual recovery edits remain effective.
+    return JSON.parse(await fs.readFile(legacyDbPath, "utf8"));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    return { documents: [], annotations: [], chats: [], todos: [] };
+    try {
+      if (canonicalPath) return JSON.parse(await fs.readFile(canonicalPath, "utf8"));
+      return { documents: [], annotations: [], chats: [], todos: [] };
+    } catch (canonicalError) {
+      if ((canonicalError as NodeJS.ErrnoException).code !== "ENOENT") throw canonicalError;
+      return { documents: [], annotations: [], chats: [], todos: [] };
+    }
   }
 }
 async function syncNotes(db: DB) {
@@ -62,9 +72,16 @@ async function syncNotes(db: DB) {
   return notesSyncError ? { warning: notesSyncError } : undefined;
 }
 async function writeDb(db: DB, sync = true) {
-  const temporary = dbPath + ".tmp";
-  await fs.writeFile(temporary, JSON.stringify(db, null, 2));
-  await fs.rename(temporary, dbPath);
+  const canonicalPath = await workspace.stateDirectory().catch(() => undefined);
+  if (canonicalPath) {
+    const dbPath = path.join(canonicalPath, "library.json");
+    const temporary = dbPath + ".tmp";
+    await fs.writeFile(temporary, JSON.stringify(db, null, 2));
+    await fs.rename(temporary, dbPath);
+  }
+  const legacyTemporary = legacyDbPath + ".tmp";
+  await fs.writeFile(legacyTemporary, JSON.stringify(db, null, 2));
+  await fs.rename(legacyTemporary, legacyDbPath);
   if (sync) return syncNotes(db);
 }
 const libraryClients = new Set<(event: unknown) => void>();
@@ -121,7 +138,7 @@ app.post("/api/ui/ack", (req, res) => {
 const existingData = await readDb();
 if (await migrateLibrary(existingData, uploadsDir)) await writeDb(existingData);
 else await syncNotes(existingData);
-const session = new AgentRuntime(root, () => workspace.directory(), dataDir);
+const session = new AgentRuntime(root, () => workspace.directory(), dataDir, undefined, { workspaceState: true });
 const agentRoutes = createAgentRouter(session, async (body) => {
   const db = await readDb();
   const doc = activeDocuments(db).find(

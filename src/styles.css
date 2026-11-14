@@ -96,15 +96,23 @@ main { min-width: 0; }
 .ann > blockquote { margin: 0; padding-left: 8px; border-left: 2px solid var(--muted); color: inherit; font-size: 11px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .ann > blockquote:hover { background: var(--hover); }
 .ann p { margin: 8px 0; white-space: pre-wrap; font-size: 12px; line-height: 1.5; }
-.annotation-content { margin: 8px 0; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.ann-details { margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 72%, var(--soft)); overflow: hidden; }
+.ann-details summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; cursor: pointer; color: var(--muted); font-size: 11px; list-style-position: inside; }
+.ann-details summary::marker { color: var(--ink); }
+.ann-details summary:hover { background: var(--hover); color: var(--ink); }
+.ann-details-hint { opacity: .7; font-size: 10px; }
+.annotation-content { margin: 8px 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.ann-details .annotation-content { margin: 0; padding: 0 10px 10px; }
 .ann .annotation-content p { font-size: inherit; line-height: inherit; white-space: normal; margin: 0 0 .65em; }
 .ann .annotation-content > :last-child { margin-bottom: 0; }
 .markdown-content .katex { font-size: 1em; }
 .markdown-content .katex-display { overflow-x: auto; overflow-y: hidden; padding: 3px 0; margin: .8em 0; }
 .markdown-content pre { overflow: auto; padding: 10px; border-radius: 8px; background: var(--hover); }
 .markdown-content :not(pre) > code { padding: 1px 4px; background: var(--hover); border-radius: 4px; font-size: .9em; }
-.markdown-content ul, .markdown-content ol { padding-left: 1.4em; }
-.markdown-content li + li { margin-top: .25em; }
+.markdown-content ul, .markdown-content ol { margin: .55em 0; padding-left: 1.7em; }
+.markdown-content ul ul, .markdown-content ol ol, .markdown-content ul ol, .markdown-content ol ul { margin-top: .2em; margin-bottom: .2em; padding-left: 1.5em; }
+.markdown-content li { padding-left: .15em; }
+.markdown-content li + li { margin-top: .3em; }
 .markdown-content h1, .markdown-content h2, .markdown-content h3 { font-size: 1.05em; line-height: 1.5; margin: .8em 0 .4em; }
 .markdown-content a { color: inherit; text-underline-offset: 3px; }
 .markdown-content blockquote { margin: .7em 0; border-left: 2px solid var(--border); padding-left: 10px; }

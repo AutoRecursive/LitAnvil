@@ -7,6 +7,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { JSDOM } from "jsdom";
 import { PDFParse } from "pdf-parse";
+import { ProxyAgent } from "undici";
 import { canonicalUrl } from "./import-utils.js";
 export type LibraryDocument = {
   id: string;
@@ -61,6 +62,8 @@ export const documentAnnotations = (db: LibraryDB, id: string) =>
 const digest = (data: Buffer | string) =>
   createHash("sha256").update(data).digest("hex");
 const maxFileSize = 100 * 1024 * 1024;
+const httpProxy = process.env.LITANVIL_HTTP_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+const httpDispatcher = httpProxy ? new ProxyAgent(httpProxy) : undefined;
 async function downloadBody(response: globalThis.Response) {
   if (Number(response.headers.get("content-length")) > maxFileSize) {
     await response.body?.cancel();
@@ -484,6 +487,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       if (typeof req.body.url !== "string" || !req.body.url.trim())
         return res.status(400).json({ error: "请输入链接" });
       const normalized = canonicalUrl(req.body.url.trim());
+      console.info("[Library] import start", normalized);
       const db = await read();
       if (req.body.topicId !== undefined && req.body.topicId !== null && !(db.topics || []).some(topic => topic.id === req.body.topicId))
         return res.status(400).json({error: "主题不存在"});
@@ -516,7 +520,8 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       }
       const response = await fetch(normalized, {
         signal: AbortSignal.timeout(45000),
-      });
+        ...(httpDispatcher ? { dispatcher: httpDispatcher } : {}),
+      } as RequestInit);
       if (!response.ok) throw new Error(`下载失败（${response.status}）`);
       const buffer = await downloadBody(response);
       const hash = digest(buffer);
@@ -591,8 +596,10 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       if (cached) db.documents[db.documents.indexOf(cached)] = document;
       else db.documents.push(document);
       await save(res, db, document);
+      console.info("[Library] import complete", { id: document.id, source: normalized, sourceType: document.sourceType });
       saved = true;
     } catch (error) {
+      console.error("[Library] import failed", { url: req.body?.url, error: String(error) });
       if (!res.headersSent)
         res
           .status(400)

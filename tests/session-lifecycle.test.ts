@@ -31,10 +31,10 @@ it('interrupts a turn even when stop is pressed before turn/start replies',async
  finally{session.close();await fs.rm(root,{recursive:true,force:true})}
 });
 
-it('preserves the persisted thread when resume fails instead of silently starting an empty conversation',async()=>{
+it('starts a fresh thread when the persisted rollout is unavailable',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'lit-resume-'));const storage=path.join(root,'data');await fs.mkdir(storage);await fs.writeFile(path.join(storage,'session.json'),JSON.stringify({threadId:'keep-this-thread'}));
  const transport=()=>spawn(process.execPath,[path.resolve('tests/fixtures/app-server.mjs')],{stdio:'pipe',env:{...process.env,LITANVIL_FAIL_RESUME:'1'}});
  const session=new CodexSession(root,async()=>root,storage,transport);session.log=()=>{};
- try{await expect(session.connect()).rejects.toThrow('Temporary resume failure');expect(JSON.parse(await fs.readFile(path.join(storage,'session.json'),'utf8')).threadId).toBe('keep-this-thread');expect(session.state.items).toEqual([])}
+ try{await session.connect();expect(session.state.threadId).not.toBe('keep-this-thread');expect(JSON.parse(await fs.readFile(path.join(storage,'session.json'),'utf8')).threadId).toBe(session.state.threadId);expect(session.state.items).toEqual([])}
  finally{session.close();await fs.rm(root,{recursive:true,force:true})}
 });

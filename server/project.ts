@@ -32,6 +32,12 @@ export class ProjectWorkspace {
       throw error;
     }
   }
+  async stateDirectory() {
+    const root = await this.directory();
+    const state = path.join(root, "papers", ".litanvil");
+    await fs.mkdir(state, { recursive: true });
+    return state;
+  }
   async configure(directory: string) {
     if (!path.isAbsolute(directory)) throw new Error("请输入绝对目录路径");
     const resolved = await fs.realpath(directory);

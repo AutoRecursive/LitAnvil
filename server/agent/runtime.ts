@@ -51,11 +51,13 @@ export class AgentRuntime extends EventEmitter {
   private closed = false;
   private persistenceErrors = new Map<string, Error>();
   private factory: AdapterFactory;
+  private workspaceState: boolean;
   constructor(
     private root: string,
     private workspace: () => Promise<string>,
     private dataDir = path.join(root, "data"),
     factory?: AdapterFactory,
+    options: { workspaceState?: boolean } = {},
   ) {
     super();
     this.factory =
@@ -64,6 +66,7 @@ export class AgentRuntime extends EventEmitter {
         provider === "codex"
           ? new CodexAdapter(options)
           : new ClaudeAdapter(options));
+    this.workspaceState = options.workspaceState === true;
   }
   async providers(): Promise<ProviderInfo[]> {
     return Promise.all(
@@ -81,6 +84,8 @@ export class AgentRuntime extends EventEmitter {
     );
   }
   private scope(workspace: string) {
+    if (this.workspaceState)
+      return path.join(workspace, "papers", ".litanvil", "agents");
     return path.join(
       this.dataDir,
       "agents",

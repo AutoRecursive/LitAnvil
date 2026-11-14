@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {"lita": "bin/lita.mjs"},
+  "bin": {
+    "lita": "bin/lita.mjs"
+  },
   "scripts": {
     "install-cli": "node scripts/install-cli.mjs",
     "dev": "concurrently \"tsx watch server/index.ts\" \"vite --host 0.0.0.0\"",
@@ -28,6 +30,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "undici": "^7.30.2",
     "vite": "latest"
   },
   "devDependencies": {
