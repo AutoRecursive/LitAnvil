@@ -53,3 +53,10 @@ it('clears the visible transcript and drafts from the same clear action that res
  expect(request).toHaveBeenCalledWith(expect.stringContaining('/clear'),expect.objectContaining({method:'POST'}));
  expect(host.textContent).not.toContain('old answer');expect(chatDrafts.getSnapshot()).toEqual({text:'',unsent:[]});expect(host.textContent).toContain('有什么想一起研究的？');
 });
+it('places annotation actions above messages and outside the message composer',async()=>{
+ await act(async()=>root.render(<Chat onImport={onImport} quote="Selected text"><button>保存高亮</button><button>保存评论</button></Chat>));
+ const panel=host.querySelector('.selection-panel')!;
+ expect(panel.textContent).toContain('Selected text');expect(panel.textContent).toContain('保存高亮');expect(panel.textContent).toContain('保存评论');
+ expect(host.querySelector('.composer')?.textContent).not.toContain('保存高亮');
+ expect(panel.nextElementSibling?.className).toBe('session-messages');
+});

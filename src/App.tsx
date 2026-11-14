@@ -1,3 +1,4 @@
+import { Topics } from "./Topics";
 import {paneBounds, paneDefaults} from "../shared/reader-layout";
 import { downloadAnnotations } from "./document-download";
 import type {ExportFormat} from "../shared/document-export";
@@ -15,6 +16,9 @@ import { PdfReader } from "./PdfReader";
 import { PageNavigation } from "./PageNavigation";
 import { useLibrarySync } from "./useLibrarySync";
 import { useReadingPosition } from "./useReadingPosition";
+import { Notebook } from './Notebook';
+import { selectionReference, referenceMarkdown, type PaperReference } from '../shared/paper-reference';
+import { scrollReaderTo } from './reader-position';
 import { readReaderView, writeReaderView, readerViewDefaults } from "./view-state";
 
 type Doc = {
@@ -27,6 +31,7 @@ type Doc = {
   createdAt: string;
   progress: number;
   content: string;
+  topicId?: string | null;
   htmlSnapshot?: string;
   fileUrl?: string;
 };
@@ -40,6 +45,14 @@ type Ann = {
   location: string;
   createdAt: string;
 };
+const annotationPalette = [
+  {name: "暖沙", color: "#c9b58f"},
+  {name: "豆沙粉", color: "#c99e9e"},
+  {name: "鼠尾草绿", color: "#9eafa0"},
+  {name: "雾霾蓝", color: "#91a6b5"},
+  {name: "灰紫", color: "#afa0b5"},
+  {name: "陶土", color: "#bd9a88"},
+];
 type QueueItem = {
   id: string;
   url: string;
@@ -50,9 +63,16 @@ type QueueItem = {
 export function App() {
   const savedView = useRef(readReaderView()).current;
   const sidebarSections = useRef<HTMLDivElement>(null);
+  const homeLayout = useRef<HTMLDivElement>(null);
+  const [homeShare, setHomeShare] = useState(() => {
+    const value = Number(localStorage.getItem("litanvil-home-share"));
+    return value >= 30 && value <= 70 ? value : 50;
+  });
+  useEffect(() => { localStorage.setItem("litanvil-home-share", String(homeShare)); }, [homeShare]);
   const readerLayout = useRef<HTMLDivElement>(null);
   const readerToolbar = useRef<HTMLDivElement>(null);
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [topicRevision, setTopicRevision] = useState(0);
   const [error, setError] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState<Doc | null>(null);
@@ -73,12 +93,28 @@ export function App() {
   const [selection, setSelection] = useState("");
   const [selectionLocation, setSelectionLocation] = useState("");
   const [note, setNote] = useState("");
+  const [sideMode,setSideMode]=useState<'agent'|'notes'>('agent');
+  const [insertion,setInsertion]=useState<{id:string;documentId:string;markdown:string}>();
+  const [reference,setReference]=useState<PaperReference>();
   const [editingAnn, setEditingAnn] = useState<string | null>(null);
   const [editNote, setEditNote] = useState("");
+  const [annotationColor, setAnnotationColor] = useState(annotationPalette[0].color);
+  const [editColor, setEditColor] = useState(annotationPalette[0].color);
   const annotationInput = useRef<HTMLTextAreaElement>(null);
   const editingAnnotation = anns.find(annotation => annotation.id === editingAnn);
   useEffect(() => { if (editingAnn) annotationInput.current?.focus({preventScroll:true}); }, [editingAnn]);
   const [annotationPending, setAnnotationPending] = useState(false);
+  const [focusedAnnotation, setFocusedAnnotation] = useState<{id:string; sequence:number} | null>(null);
+  useEffect(() => {
+    if (!focusedAnnotation || !leftOpen) return;
+    const list = sidebarSections.current?.querySelector<HTMLElement>(".ann-list");
+    const row = [...(list?.querySelectorAll<HTMLElement>("[data-annotation-id]") || [])].find(item => item.dataset.annotationId === focusedAnnotation.id);
+    if (list && row) list.scrollTo({top: list.scrollTop + row.getBoundingClientRect().top - list.getBoundingClientRect().top - 48, behavior: "smooth"});
+  }, [focusedAnnotation, leftOpen]);
+  function showAnnotation(id: string) {
+    setLeftOpen(true);
+    setFocusedAnnotation(previous => ({id, sequence: (previous?.sequence || 0) + 1}));
+  }
   const [dir, setDir] = useState("");
   const [trashOpen, setTrashOpen] = useState(false);
   const [notice, setNotice] = useState<{
@@ -127,6 +163,7 @@ export function App() {
   useEffect(() => {
     let active = true;
     setAnns([]);
+    setFocusedAnnotation(null);
     setSelection("");
     setNote("");
     setSelectionLocation("");
@@ -152,6 +189,7 @@ export function App() {
   useLibrarySync({ selected, setDocuments: setDocs, setSelected, setAnnotations: setAnns,
     onSynced:()=>{
       setLibraryReady(true);
+      setTopicRevision(value=>value+1);
       setError(value=>value==="暂时无法连接文档库，恢复连接后将自动重试"?"":value);
       if (!dir) void loadProject();
     },
@@ -313,9 +351,39 @@ export function App() {
     setEditingAnn(null);
     setSelection(text);
     setSelectionLocation(JSON.stringify(pdfSelectionLocation(reader.current, range)));
+    setSideMode("agent");
     setNote("");
     setRightOpen(true);
   }
+  const selectedReference=selected&&selection?selectionReference(selected.id,selectionLocation):undefined;
+  function insertReference(){
+    if(!selectedReference)return;
+    setInsertion({id:crypto.randomUUID(),documentId:selectedReference.documentId,markdown:referenceMarkdown(selectedReference,selection)});
+    setSideMode('notes');setRightOpen(true);
+  }
+  async function openReference(ref:PaperReference){
+    try{
+      if(selected?.id!==ref.documentId){
+        const doc=docs.find(d=>d.id===ref.documentId)||await api(`/documents/${encodeURIComponent(ref.documentId)}`);
+        openDocument(doc);
+      }
+      setReference(ref);
+    }catch(error){setError(String(error));}
+  }
+  useEffect(()=>{
+    if(!reference||selected?.id!==reference.documentId)return;
+    const element=reader.current;if(!element)return;
+    let done=false;
+    const jump=()=>{
+      const page=element.querySelector<HTMLElement>(`.pdf-page[data-page="${reference.page}"][data-ready="true"]`);
+      if(!page||done)return;
+      done=true;scrollReaderTo(element,page);
+      const rect=reference.rects.find(r=>r.page===reference.page);
+      if(rect)element.scrollTop+=rect.y*page.getBoundingClientRect().height-24;
+    };
+    const observer=new MutationObserver(jump);observer.observe(element,{subtree:true,childList:true,attributes:true,attributeFilter:['data-ready']});jump();
+    return()=>observer.disconnect();
+  },[reference,selected?.id]);
   async function saveAnnotation(noteOverride = note) {
     if (!selected || !selection || annotationPending) return;
     const documentId = selected.id;
@@ -329,7 +397,7 @@ export function App() {
           quote: selection,
           note: noteOverride,
           location: selectionLocation || "reader-selection",
-          color: "#f0b429",
+          color: annotationColor,
         }),
       });
       if (sessionStorage.getItem("litanvil-open-document") === documentId) {
@@ -375,7 +443,7 @@ export function App() {
       const a = await api(`/annotations/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: editNote }),
+        body: JSON.stringify({ note: editNote, ...(editColor !== (editingAnnotation?.color || annotationPalette[0].color) ? {color: editColor} : {}) }),
       });
       setAnns((xs) => xs.map((x) => (x.id === id ? { ...x, ...a } : x)));
       setEditingAnn(null);
@@ -656,7 +724,7 @@ export function App() {
                 本篇批注 <span>{anns.length}</span>
               </div>
               {anns.map((a) => (
-                <div className="ann" key={a.id}>
+                <div className={`ann ${focusedAnnotation?.id === a.id ? "ann-focused" : ""}`} data-annotation-id={a.id} key={a.id}>
                   <blockquote
                     role="button"
                     tabIndex={0}
@@ -664,6 +732,7 @@ export function App() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") jumpToAnnotation(a);
                     }}
+                    style={{borderLeftColor: /^#[0-9a-f]{6}$/i.test(a.color || "") ? a.color : undefined}}
                     title="跳转到批注位置"
                   >
                     {a.quote || "高亮"}
@@ -686,7 +755,9 @@ export function App() {
                       setSelection("");
                       setSelectionLocation("");
                       setEditingAnn(a.id);
+                      setSideMode('agent');
                       setEditNote(a.note || "");
+                      setEditColor(a.color || annotationPalette[0].color);
                       setRightOpen(true);
                       if (panes.narrow) setLeftOpen(false);
                     }}
@@ -723,19 +794,10 @@ export function App() {
             <div className="reader-recovery" role="status">正在恢复上次阅读位置…</div>
           ) : !selected ? (
             <>
-              <div className="welcome chat-home">
-                <h1>
-                  把链接交给我，
-                  <br />
-                  <i>开始共读</i>
-                </h1>
-                <div className="home-chat-panel">
-                  <Chat onImport={importUrl} composerHeight={panes.layout.composerHeight} onComposerResize={(height)=>panes.set("composerHeight",height)} />
-                </div>
-                <div className="home-import-state" aria-live="polite">
-                  {importing && <span>正在导入文档…</span>}
-                </div>
+              <div className="welcome chat-home" ref={homeLayout} style={{"--home-share": `${homeShare}%`} as React.CSSProperties}>
                 <section className="home-library">
+                  <Topics docs={filtered} revision={topicRevision} onError={setError} onOpen={id=>{const doc=docs.find(d=>d.id===id);if(doc)openDocument(doc)}} />
+                  <div className="library-content">
                   <div className="library-head">
                     <b>
                       全部文档 <span>{docs.length}</span>
@@ -796,7 +858,22 @@ export function App() {
                       ))}
                     </div>
                   )}
+                  </div>
                 </section>
+                <ResizeHandle className="home-resize" orientation="vertical" label="文档库与对话宽度" value={homeShare} min={30} max={70} defaultValue={50} step={2} pixelsPerUnit={() => Math.max(1, (homeLayout.current?.clientWidth || 100) / 100)} onChange={setHomeShare} />
+                <div className="home-conversation">
+                <h1>
+                  把链接交给我，
+                  <br />
+                  <i>开始共读</i>
+                </h1>
+                <div className="home-chat-panel">
+                  <Chat onImport={importUrl} composerHeight={panes.layout.composerHeight} onComposerResize={(height)=>panes.set("composerHeight",height)} />
+                </div>
+                <div className="home-import-state" aria-live="polite">
+                  {importing && <span>正在导入文档…</span>}
+                </div>
+                </div>
               </div>
             </>
           ) : (
@@ -887,6 +964,7 @@ export function App() {
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}
+                        onAnnotationClick={showAnnotation}
                       />
                     ) : (
                       <div className="pdf-error">
@@ -906,6 +984,7 @@ export function App() {
                         scale={1.25 * zoom}
                         onSelection={capture}
                         annotations={anns}
+                        onAnnotationClick={showAnnotation}
                       />
                     ) : (
                       <div className="pdf-error">
@@ -967,6 +1046,11 @@ export function App() {
                   />
                 )}
                 <section className={`ai-panel ${rightOpen ? "" : "collapsed"}`}>
+                  <div className="sidebar-modes" role="group" aria-label="侧边栏模式">
+                    <button aria-pressed={sideMode==='agent'} onClick={()=>setSideMode('agent')}>Agent</button>
+                    <button aria-pressed={sideMode==='notes'} onClick={()=>setSideMode('notes')}>笔记</button>
+                  </div>
+                  <div className="sidebar-view" hidden={sideMode!=='agent'}>
                   <Chat
                     composerHeight={panes.layout.composerHeight}
                     onComposerResize={(height)=>panes.set("composerHeight",height)}
@@ -976,6 +1060,10 @@ export function App() {
                   >
                     {(selection || editingAnnotation) && (
                       <div className="selection-actions">
+                        <div className="annotation-colors" role="group" aria-label="批注颜色">
+                          <span>颜色</span>
+                          {annotationPalette.map(({name, color}) => <button type="button" key={color} className="annotation-swatch" aria-label={name} aria-pressed={(editingAnnotation ? editColor : annotationColor) === color} title={name} disabled={annotationPending} onClick={() => editingAnnotation ? setEditColor(color) : setAnnotationColor(color)} style={{"--swatch-color": color} as React.CSSProperties} />)}
+                        </div>
                         <textarea
                           ref={annotationInput}
                           aria-label="批注内容"
@@ -983,12 +1071,17 @@ export function App() {
                           value={editingAnnotation ? editNote : note}
                           onChange={(e) => editingAnnotation ? setEditNote(e.target.value) : setNote(e.target.value)}
                         />
+                        {!editingAnnotation && <button type="button" className="highlight-action" disabled={annotationPending} onClick={() => saveAnnotation("")}>保存高亮</button>}
                         <button
-                          disabled={annotationPending}
+                          disabled={annotationPending || (!editingAnnotation && !note.trim())}
                           onClick={() => editingAnnotation ? updateAnnotation(editingAnnotation.id) : saveAnnotation(note)}
                         >
-                          {editingAnnotation ? "保存修改" : note.trim() ? "保存批注" : "保存高亮"}
+                          {editingAnnotation ? "保存修改" : "保存评论"}
                         </button>
+                        <button
+                          disabled={!selectedReference || annotationPending}
+                          onClick={insertReference}
+                        >插入笔记链接</button>
                         <button
                           className="selection-clear"
                           aria-label="清空评论"
@@ -1012,6 +1105,10 @@ export function App() {
                       </div>
                     )}
                   </Chat>
+                  </div>
+                  <div className="sidebar-view" hidden={sideMode!=='notes'}>
+                    <Notebook key={selected.id} documentId={selected.id} selectionLink={selectedReference?'available':undefined} insertion={insertion?.documentId===selected.id?insertion:undefined} onInsert={insertReference} onReference={openReference}/>
+                  </div>
                 </section>
               </div>
             </>

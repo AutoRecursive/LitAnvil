@@ -125,3 +125,27 @@ it('restores saved text-anchored annotations at the rendered glyphs after a font
     expect(page.querySelectorAll('.saved-highlight')).toHaveLength(1);
   } finally { delete (Range.prototype as any).getClientRects; }
 });
+
+it('renders each saved annotation using its color and updates it on edit', async () => {
+  const location=JSON.stringify({rects:[{page:1,x:.1,y:.2,w:.3,h:.02}]});
+  await show(1.25,[{note:'color',location,color:'#91a6b5'}] as any);
+  let mark=article.querySelector<HTMLElement>('.saved-highlight')!;
+  expect(mark.style.backgroundColor).toBe('rgba(145, 166, 181, 0.44)');
+  await show(1.25,[{note:'color',location,color:'#c99e9e'}] as any);
+  mark=article.querySelector<HTMLElement>('.saved-highlight')!;
+  expect(mark.style.backgroundColor).toBe('rgba(201, 158, 158, 0.44)');
+});
+
+it('cycles overlapping annotations once per click or double-click without blocking text selection', async () => {
+ const onClick=vi.fn();
+ const location=JSON.stringify({rects:[{page:1,x:.1,y:.2,w:.3,h:.02}]});
+ const annotations=[{id:'first',note:'one',location},{id:'second',note:'two',location}];
+ await act(async()=>root.render(<PdfReader src="/paper.pdf" annotations={annotations} onSelection={()=>{}} onAnnotationClick={onClick}/>));
+ await act(async()=>vi.advanceTimersByTime(100));
+ const page=article.querySelector<HTMLElement>('.pdf-page[data-page="1"]')!;
+ page.querySelectorAll<HTMLElement>('.saved-highlight').forEach(mark=>{mark.getBoundingClientRect=()=>({left:10,right:100,top:10,bottom:30,width:90,height:20} as DOMRect)});
+ await act(async()=>page.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:20,clientY:20,detail:1})));
+ await act(async()=>page.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:20,clientY:20,detail:2})));
+ await act(async()=>page.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:20,clientY:20,detail:1})));
+ expect(onClick.mock.calls.map(call=>call[0])).toEqual(['first','second']);
+});

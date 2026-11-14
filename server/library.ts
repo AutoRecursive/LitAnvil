@@ -1,3 +1,4 @@
+import { topicDescendants, type Topic } from "../shared/topics.js";
 import { exportFilename, exportFormats, type ExportFormat } from "../shared/document-export.js";
 import { Router, type Response, type RequestHandler } from "express";
 import multer from "multer";
@@ -14,6 +15,7 @@ export type LibraryDocument = {
   source: string;
   sourceType: "web" | "arxiv" | "pdf" | "epub";
   tags: string[];
+  topicId?: string | null;
   createdAt: string;
   progress: number;
   content: string;
@@ -23,6 +25,7 @@ export type LibraryDocument = {
   contentHash?: string;
   sourceAliases?: string[];
   deletedAt?: string;
+  readerNote?: {markdown:string;revision:number;updatedAt?:string};
 };
 export type LibraryAnnotation = {
   id: string;
@@ -41,6 +44,7 @@ export type LibraryAnnotation = {
   deletedAt?: string;
 };
 export type LibraryDB = {
+  topics?: Topic[];
   documents: LibraryDocument[];
   annotations: LibraryAnnotation[];
   chats: any[];
@@ -240,6 +244,43 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
   };
   const find = (db: LibraryDB, id: unknown) =>
     db.documents.find((document) => document.id === id && !document.deletedAt);
+  router.get("/topics", async (_req, res) => res.json((await read()).topics || []));
+  const topicFields = (body: Record<string, unknown>, topics: Topic[], current?: Topic) => {
+    if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 120)) return "主题名称须为 1–120 个字符";
+    if (body.color !== undefined && (typeof body.color !== "string" || !/^#[0-9a-f]{6}$/i.test(body.color))) return "主题颜色须为六位十六进制颜色";
+    if (body.parentId !== undefined && body.parentId !== null) {
+      if (!topics.some(topic => topic.id === body.parentId)) return "上级主题不存在";
+      if (current && topicDescendants(topics, current.id).has(body.parentId as string)) return "不能将主题移到自身或子主题下";
+    }
+  };
+  post("/topics", async (req, res) => {
+    const db = await read(), topics = db.topics ||= [];
+    const error = topicFields(req.body, topics);
+    if (error || typeof req.body.name !== "string" || !req.body.name.trim()) return res.status(400).json({error: error || "请输入主题名称"});
+    const topic: Topic = {id: randomUUID(), name: req.body.name.trim(), parentId: req.body.parentId ?? null, color: req.body.color || "#6366f1"};
+    topics.push(topic);
+    await save(res, db, topic);
+  });
+  patch("/topics/:id", async (req, res) => {
+    const db = await read(), topics = db.topics || [];
+    const topic = topics.find(topic => topic.id === req.params.id);
+    if (!topic) return res.status(404).json({error: "主题不存在"});
+    const error = topicFields(req.body, topics, topic);
+    if (error) return res.status(400).json({error});
+    if (req.body.name !== undefined) topic.name = req.body.name.trim();
+    if (req.body.color !== undefined) topic.color = req.body.color;
+    if (req.body.parentId !== undefined) topic.parentId = req.body.parentId;
+    await save(res, db, topic);
+  });
+  remove("/topics/:id", async (req, res) => {
+    const db = await read(), topics = db.topics || [];
+    const topic = topics.find(topic => topic.id === req.params.id);
+    if (!topic) return res.status(404).json({error: "主题不存在"});
+    for (const child of topics) if (child.parentId === topic.id) child.parentId = topic.parentId;
+    for (const document of db.documents) if (document.topicId === topic.id) document.topicId = topic.parentId;
+    db.topics = topics.filter(item => item.id !== topic.id);
+    await save(res, db, {ok: true});
+  });
   router.get("/trash", async (_req, res) => {
     const db = await read();
     res.json({
@@ -281,6 +322,22 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       annotations: documentAnnotations(db, document.id),
     });
   });
+  router.get('/documents/:id/reader-note',async(req,res)=>{
+    const document=find(await read(),req.params.id);
+    if(!document)return res.status(404).json({error:'文档不存在'});
+    res.json(document.readerNote||{markdown:'',revision:0});
+  });
+  patch('/documents/:id/reader-note',async(req,res)=>{
+    const db=await read();const document=find(db,req.params.id);
+    if(!document)return res.status(404).json({error:'文档不存在'});
+    const {markdown,revision}=req.body;
+    if(typeof markdown!=='string'||Buffer.byteLength(markdown,'utf8')>1024*1024||!Number.isSafeInteger(revision)||revision<0)
+      return res.status(400).json({error:'笔记格式无效或超过 1MB'});
+    const previous=document.readerNote||{markdown:'',revision:0};
+    if(revision!==previous.revision)return res.status(409).json({error:'笔记已在其他页面更新，草稿已保留',note:previous});
+    document.readerNote={markdown,revision:previous.revision+1,updatedAt:new Date().toISOString()};
+    await save(res,db,document.readerNote);
+  });
   remove("/documents/:id", async (req, res) => {
     const db = await read();
     const document = find(db, req.params.id);
@@ -305,6 +362,8 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
     const db = await read();
     const document = find(db, req.params.id);
     if (!document) return res.status(404).json({ error: "文档不存在" });
+    if (req.body.topicId !== undefined && req.body.topicId !== null && !(db.topics || []).some(topic => topic.id === req.body.topicId))
+      return res.status(400).json({error: "主题不存在"});
     if (req.body.title !== undefined) {
       if (typeof req.body.title !== "string" || !req.body.title.trim())
         return res.status(400).json({ error: "标题不能为空" });
@@ -318,7 +377,8 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         return res.status(400).json({ error: "阅读进度无效" });
       document.progress = Math.max(0, Math.min(1, req.body.progress));
     }
-    await save(res, db, document, req.body.title !== undefined);
+    if (req.body.topicId !== undefined) document.topicId = req.body.topicId;
+    await save(res, db, document, req.body.title !== undefined || req.body.topicId !== undefined);
   });
   router.get("/documents/:id/annotations", async (req, res) => {
     const db = await read();
@@ -425,6 +485,8 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         return res.status(400).json({ error: "请输入链接" });
       const normalized = canonicalUrl(req.body.url.trim());
       const db = await read();
+      if (req.body.topicId !== undefined && req.body.topicId !== null && !(db.topics || []).some(topic => topic.id === req.body.topicId))
+        return res.status(400).json({error: "主题不存在"});
       await migrateLibrary(db, uploads);
       let cached = db.documents.find((document) =>
         [document.source, ...(document.sourceAliases || [])].some((source) => {
@@ -448,6 +510,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         ((cached.sourceType !== "arxiv" && cached.sourceType !== "pdf") ||
           readable)
       ) {
+        if (req.body.topicId !== undefined) cached.topicId = req.body.topicId;
         delete cached.deletedAt;
         return await save(res, db, { ...cached, cached: true });
       }
@@ -475,6 +538,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         } else cached ||= candidate;
       }
       if (duplicate) {
+        if (req.body.topicId !== undefined) duplicate.topicId = req.body.topicId;
         delete duplicate.deletedAt;
         duplicate.sourceAliases = [
           ...new Set([...(duplicate.sourceAliases || []), normalized]),
@@ -508,6 +572,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       } else
         fields = { ...extractHtml(buffer.toString("utf8")), sourceType: "web" };
       const document: LibraryDocument = {
+        topicId: req.body.topicId !== undefined ? req.body.topicId : cached?.topicId,
         id: cached?.id || randomUUID(),
         title: "未命名文档",
         author: "",
@@ -548,6 +613,8 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       const buffer = await fs.readFile(req.file.path);
       const hash = digest(buffer);
       const db = await read();
+      if (req.body.topicId !== undefined && req.body.topicId !== null && !(db.topics || []).some(topic => topic.id === req.body.topicId))
+        return res.status(400).json({error: "主题不存在"});
       await migrateLibrary(db, uploads);
       const cached = db.documents.find(
         (document) => document.contentHash === hash,
@@ -570,6 +637,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
           cached.mimeType = "application/pdf";
           repaired = true;
         }
+        if (req.body.topicId !== undefined) cached.topicId = req.body.topicId;
         delete cached.deletedAt;
         const response = await save(res, db, { ...cached, cached: true });
         saved = repaired;
@@ -582,6 +650,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
           : { title: fallback, content: buffer.toString("utf8") };
       const document: LibraryDocument = {
         id: randomUUID(),
+        topicId: req.body.topicId || null,
         ...parsed,
         author: "",
         source: req.file.originalname,

@@ -315,6 +315,19 @@ export class AgentRuntime extends EventEmitter {
       this.project(entry);
     } finally { this.sending = false; }
   }
+  async compact(target?: AgentTarget) {
+    if (this.sending) throw new Error("操作正在提交，请稍候");
+    this.sending = true;
+    try {
+      await this.connect();
+      if (this.switching) throw new Error("正在切换上下文");
+      this.checkTarget(target);
+      const entry = this.active!;
+      if (entry.adapter.state.status === "running") throw new Error("当前回答尚未结束");
+      await entry.adapter.compact();
+      this.project(entry);
+    } finally { this.sending = false; }
+  }
   async stop(target?: AgentTarget) {
     await this.connect();
     this.checkTarget(target);

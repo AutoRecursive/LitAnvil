@@ -100,6 +100,9 @@ export class CodexAdapter extends AgentAdapter {
   send(text: string, context?: unknown) {
     return this.native.send(text, context);
   }
+  compact() {
+    return this.native.compact();
+  }
   stop() {
     return this.native.stop();
   }

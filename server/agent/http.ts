@@ -68,7 +68,7 @@ export function createAgentRouter(
       res.status(400).json({ error: String(error) });
     }
   });
-  for (const action of ["stop", "clear"] as const)
+  for (const action of ["stop", "clear", "compact"] as const)
     router.post("/" + action, async (req, res) => {
       try {
         await runtime[action](target(req.body));

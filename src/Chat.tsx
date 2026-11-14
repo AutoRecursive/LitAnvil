@@ -50,6 +50,9 @@ export function Chat({
   const {text:draft,unsent} = useChatDraft();
   const setDraft = chatDrafts.setText;
   const [error, setError] = useState("");
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [commandDismissed, setCommandDismissed] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
   const [pending, setPending] = useState<string | null>(null);
   const requestLock = useRef<string | null>(null);
   const stopLock = useRef(false);
@@ -95,6 +98,18 @@ export function Chat({
       else { requestLock.current = null; setPending(null); }
     }
   }
+  const commands = [
+    ...(state.provider === "codex" ? [{ name: "/compact", description: "压缩当前会话上下文" }] : []),
+    { name: "/clear", description: "开始新的会话上下文" },
+  ];
+  const matches = /^\/[\w-]*$/.test(draft) && !commandDismissed
+    ? commands.filter(command => command.name.startsWith(draft.toLowerCase())) : [];
+  const selectedCommand = matches[Math.min(commandIndex, matches.length - 1)];
+  function chooseCommand(name: string) {
+    setDraft(name);
+    setCommandDismissed(true);
+    input.current?.focus();
+  }
   const busy = state.status === "running";
   const importLink = arxivLink(draft);
   const connected = state.status !== "connecting" && Boolean(state.nativeSessionId);
@@ -106,7 +121,11 @@ export function Chat({
     const link = arxivLink(text);
     if (link) { onImport(link); setDraft(""); return; }
     setDraft("");
-    const sent = await action("message", { text, documentId, quote });
+    setCommandDismissed(false);
+    const command = commands.find(item => item.name === text);
+    const sent = command
+      ? await action(command.name.slice(1))
+      : await action("message", { text, documentId, quote });
     if (!sent) chatDrafts.failed(text);
   }
   const providerLabel = state.provider === "claude" ? "Claude" : "Codex";
@@ -153,6 +172,10 @@ export function Chat({
           清空上下文
         </button>
       </div>
+      {(quote || children) && <div className="selection-panel">
+        {quote && <blockquote className="chat-quote">{quote}</blockquote>}
+        {children}
+      </div>}
       <div className="session-messages" ref={list}>
         {state.items.length === 0 && (
           <div className="session-empty">有什么想一起研究的？</div>
@@ -185,17 +208,34 @@ export function Chat({
           direction={-1}
           onChange={onComposerResize}
         />}
-        {quote && <blockquote className="chat-quote">{quote}</blockquote>}
-        {children}
+        {matches.length > 0 && <div className="slash-menu" role="listbox" aria-label="斜杠命令">
+          {matches.map((command, index) => <button type="button" role="option" aria-selected={index === Math.min(commandIndex, matches.length - 1)}
+            key={command.name} onMouseDown={event => event.preventDefault()} onClick={() => chooseCommand(command.name)}>
+            <strong>{command.name}</strong><span>{command.description}</span>
+          </button>)}
+        </div>}
         <textarea
+          ref={input}
+          aria-autocomplete="list"
+          aria-expanded={matches.length > 0}
           style={onComposerResize ? {height:inputHeight} : undefined}
           aria-label="消息"
           placeholder={
             documentId ? "询问这篇论文…" : "问点什么，或粘贴 arXiv 链接"
           }
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); setCommandIndex(0); setCommandDismissed(false); }}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (matches.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              setCommandIndex(index => (index + (e.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length);
+              return;
+            }
+            if (matches.length && e.key === "Escape") { e.preventDefault(); setCommandDismissed(true); return; }
+            if (selectedCommand && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+              e.preventDefault(); chooseCommand(selectedCommand.name); return;
+            }
             if (
               e.key === "Enter" &&
               !e.shiftKey &&

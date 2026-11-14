@@ -513,3 +513,15 @@ it('exports the same authoritative annotations through JSON, Markdown and MCP wi
  await fetch(base+'/api/annotations/'+annotation.id,{method:'DELETE'});expect((await(await fetch(base+`/api/documents/${document.id}/export.json`)).json()).annotations).toEqual([]);
  await fetch(base+'/api/documents/'+document.id,{method:'DELETE'});expect((await fetch(base+`/api/documents/${document.id}/export.json`)).status).toBe(404);
 });
+
+it('organizes nested topics without losing papers or allowing cycles', async () => {
+  const call = async (route:string, method='GET', body?:unknown) => fetch(base+'/api'+route,{method,headers:{'content-type':'application/json'},...(body === undefined ? {} : {body:JSON.stringify(body)})});
+  const parent=await (await call('/topics','POST',{name:'Methods',color:'#123456'})).json();
+  const child=await (await call('/topics','POST',{name:'Models',parentId:parent.id})).json();
+  const paper=await (await call('/import/url','POST',{url:'data:text/html,<title>Topic Paper</title><p>text</p>',topicId:child.id})).json();
+  expect(paper.topicId).toBe(child.id);
+  expect((await call('/topics/'+parent.id,'PATCH',{parentId:child.id})).status).toBe(400);
+  expect((await call('/topics/'+child.id,'DELETE')).ok).toBe(true);
+  expect((await (await call('/documents/'+paper.id)).json()).topicId).toBe(parent.id);
+  expect((await (await call('/topics')).json()).some((topic:any)=>topic.id===child.id)).toBe(false);
+});

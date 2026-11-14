@@ -10,6 +10,18 @@ describe('Codex session projection',()=>{
  s.receive({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});
  expect(s.state.status).toBe('idle');expect(s.state.threadId).toBe('thread');expect(s.state.items).toHaveLength(1);
  });
+ it('starts native compaction and follows its turn lifecycle', async()=>{
+ const s=new CodexSession('/tmp');s.log=()=>{};s.state.threadId='thread';
+ s.connect=async()=>{};
+ let call: unknown;
+ s.request=async(method,params)=>{call={method,params};return {}};
+ await s.compact();
+ expect(call).toEqual({method:'thread/compact/start',params:{threadId:'thread'}});
+ expect(s.state.status).toBe('running');
+ s.receive({method:'turn/started',params:{threadId:'thread',turn:{id:'compact'}}});
+ s.receive({method:'turn/completed',params:{threadId:'thread',turn:{id:'compact',status:'completed'}}});
+ expect(s.state.status).toBe('idle');
+ });
  it('ignores events from a previous context and preserves tool output',()=>{
  const s=new CodexSession('/tmp');s.log=()=>{};s.state.threadId='new';
  s.receive({method:'item/started',params:{threadId:'old',item:{id:'old'}}});expect(s.state.items).toEqual([]);

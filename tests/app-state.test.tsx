@@ -165,3 +165,20 @@ it('edits existing annotations in the shared right composer, retains failed edit
  const updates=request.mock.calls.filter(([,init])=>init?.method==='PATCH');
  expect(updates.at(-1)?.[0]).toContain('/annotations/ann');expect(JSON.parse(updates.at(-1)?.[1].body)).toEqual({note:''});
 });
+
+it('persists a changed annotation color from the editor', async () => {
+ sessionStorage.setItem('litanvil-open-document','A');
+ const annotation={id:'ann',quote:'Evidence',note:'Note',location:'{}',color:'#c9b58f'};
+ request.mockImplementation(async(url:string,init?:RequestInit)=>{
+  if(init?.method==='PATCH')return result({...annotation,...JSON.parse(String(init.body))});
+  return result(url.endsWith('/documents')?documents:url.endsWith('/annotations')?[annotation]:{directory:'/notes'});
+ });
+ await act(async()=>root.render(<App/>));
+ await act(async()=>container.querySelector<HTMLButtonElement>('.ann-edit')!.click());
+ await act(async()=>container.querySelector<HTMLButtonElement>('button[aria-label="雾霾蓝"]')!.click());
+ expect(container.querySelector('button[aria-label="雾霾蓝"]')?.getAttribute('aria-pressed')).toBe('true');
+ await act(async()=>Array.from(container.querySelectorAll('button')).find(button=>button.textContent==='保存修改')!.click());
+ const update=request.mock.calls.find(([url,init])=>url.endsWith('/annotations/ann')&&init?.method==='PATCH');
+ expect(JSON.parse(update![1].body)).toMatchObject({note:'Note',color:'#91a6b5'});
+ expect(container.querySelector<HTMLElement>('.ann blockquote')?.style.borderLeftColor).toBe('rgb(145, 166, 181)');
+});

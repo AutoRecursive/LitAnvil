@@ -369,6 +369,24 @@ export class CodexSession extends EventEmitter {
       if (this.startingTurn === start) this.startingTurn = undefined;
     }
   }
+  async compact() {
+    await this.connect();
+    if (this.switching || this.state.status === "running") throw new Error("请等待当前操作结束");
+    const threadId = this.state.threadId;
+    this.state.status = "running";
+    this.state.error = null;
+    this.publish();
+    const start = this.request("thread/compact/start", { threadId }).catch(error => {
+      if (this.state.threadId === threadId) {
+        this.state.status = "error";
+        this.state.error = String(error);
+        this.publish();
+      }
+      throw error;
+    });
+    this.startingTurn = start;
+    try { await start; } finally { if (this.startingTurn === start) this.startingTurn = undefined; }
+  }
   async stop() {
     await this.connect();
     await this.startingTurn;

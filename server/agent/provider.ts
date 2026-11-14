@@ -8,6 +8,7 @@ export abstract class AgentAdapter extends EventEmitter {
   abstract state: AdapterState;
   abstract connect(): Promise<void>;
   abstract send(text: string, context?: unknown): Promise<void>;
+  async compact(): Promise<void> { throw new Error("当前 Agent 不支持压缩上下文"); }
   abstract stop(): Promise<void>;
   abstract clear(): Promise<void>;
   abstract close(): void;

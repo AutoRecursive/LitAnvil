@@ -6,7 +6,7 @@ import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
-type Annotation = { location: string; note: string };
+type Annotation = { id?: string; location: string; note: string; color?: string };
 type PageView = { page: pdfjsLib.PDFPageProxy; element: HTMLElement };
 type LoadedDocument = { src: string; pages: PageView[] };
 
@@ -25,12 +25,14 @@ function paintAnnotations(container: HTMLElement, annotations: Annotation[]) {
         if (!page) continue;
         const mark = document.createElement("div");
         mark.className = "saved-highlight";
+        if (annotation.id) mark.dataset.annotationId = annotation.id;
         mark.title = annotation.note || "高亮";
         Object.assign(mark.style, {
           left: `${rect.x * 100}%`,
           top: `${rect.y * 100}%`,
           width: `${rect.w * 100}%`,
           height: `${rect.h * 100}%`,
+          ...(annotation.color && /^#[0-9a-f]{6}$/i.test(annotation.color) ? { backgroundColor: `${annotation.color}70` } : {}),
         });
         page.append(mark);
       }
@@ -44,15 +46,32 @@ export const PdfReader = React.memo(
   function PdfReader({
     src,
     onSelection,
+    onAnnotationClick,
     scale = 1.25,
     annotations = [],
   }: {
     src: string;
     onSelection: () => void;
+    onAnnotationClick?: (id: string) => void;
     scale?: number;
     annotations?: Annotation[];
   }) {
     const host = useRef<HTMLDivElement>(null);
+    const cycle = useRef<{key:string; index:number} | null>(null);
+    function clickHighlight(event: React.MouseEvent<HTMLDivElement>) {
+      // A double click is one navigation, not two; dragging text remains selection.
+      if (event.detail > 1 || window.getSelection()?.toString()) return;
+      const page = (event.target as Element).closest<HTMLElement>(".pdf-page");
+      if (!page) return;
+      const ids = [...new Set([...page.querySelectorAll<HTMLElement>(".saved-highlight[data-annotation-id]")]
+        .filter(mark => { const rect = mark.getBoundingClientRect(); return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom; })
+        .map(mark => mark.dataset.annotationId!))];
+      if (!ids.length) { cycle.current = null; return; }
+      const key = ids.join("|");
+      const index = cycle.current?.key === key ? (cycle.current.index + 1) % ids.length : 0;
+      cycle.current = {key, index};
+      onAnnotationClick?.(ids[index]);
+    }
     const annotationsRef = useRef(annotations);
     annotationsRef.current = annotations;
     const [width, setWidth] = useState(0);
@@ -237,10 +256,10 @@ export const PdfReader = React.memo(
         data-source={loaded?.src === src ? src : undefined}
       >
         {status && <div className="pdf-status" role="status">{status}</div>}
-        <div className="pdf-pages" ref={host} onMouseUpCapture={event => finishPdfTextSelection(event.currentTarget,event.target,event.clientX,event.clientY)} onMouseUp={onSelection} />
+        <div className="pdf-pages" ref={host} onClick={clickHighlight} onMouseUpCapture={event => finishPdfTextSelection(event.currentTarget,event.target,event.clientX,event.clientY)} onMouseUp={onSelection} />
       </div>
     );
   },
   (a, b) =>
-    a.src === b.src && a.scale === b.scale && a.annotations === b.annotations,
+    a.src === b.src && a.scale === b.scale && a.annotations === b.annotations && a.onAnnotationClick === b.onAnnotationClick,
 );

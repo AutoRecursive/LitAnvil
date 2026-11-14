@@ -46,7 +46,7 @@ export class ProjectWorkspace {
     return resolved;
   }
   async sync(
-    documents: { id: string; title: string; source: string; content: string }[],
+    documents: { id: string; title: string; source: string; content: string; readerNote?:{markdown:string} }[],
     annotations: any[],
   ) {
     const root = await this.directory();
@@ -58,6 +58,7 @@ export class ProjectWorkspace {
         path.join(folder, "paper.md"),
         `# ${doc.title}\n\nSource: ${doc.source}\n\n${doc.content}`,
       );
+      if(doc.readerNote)await atomicWrite(path.join(folder,'research.md'),doc.readerNote.markdown);
       const notes = annotations.filter((a) => a.documentId === doc.id);
       await atomicWrite(
         path.join(folder, "annotations.json"),
