@@ -30,6 +30,7 @@ type Doc = {
   tags: string[];
   createdAt: string;
   progress: number;
+  priority?: "high" | "medium" | "low";
   content: string;
   topicId?: string | null;
   htmlSnapshot?: string;
@@ -223,10 +224,7 @@ export function App() {
     } catch {}
   }
   const filtered = useMemo(
-    () =>
-      docs.filter((d) =>
-        `${d.title} ${d.source}`.toLowerCase().includes(query.toLowerCase()),
-      ),
+    () => docs.filter((d) => `${d.title} ${d.source}`.toLowerCase().includes(query.toLowerCase())).sort((a,b) => ({high:0,medium:1,low:2}[a.priority || "medium"] - {high:0,medium:1,low:2}[b.priority || "medium"]) || (b.createdAt || "").localeCompare(a.createdAt || "")),
     [docs, query],
   );
   async function importUrl(inputUrl = url) {
@@ -851,8 +849,9 @@ export function App() {
                           >
                             <span>{d.sourceType}</span>
                             <b>{d.title}</b>
-                            <small>{Math.round(d.progress * 100)}% 已读</small>
+                            <small>{d.priority === "high" ? "高优先级 · " : d.priority === "low" ? "低优先级 · " : "中优先级 · "}{Math.round(d.progress * 100)}% 已读</small>
                           </button>
+                          <select className="document-priority" aria-label={`设置 ${d.title} 的优先级`} value={d.priority || "medium"} onChange={async e => { const priority=e.target.value as Doc["priority"]; await api(`/documents/${d.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({priority})}); setDocs(xs=>xs.map(x=>x.id===d.id?{...x,priority}:x)); }}><option value="high">高优先级</option><option value="medium">中优先级</option><option value="low">低优先级</option></select>
                           <button
                             className="document-delete"
                             aria-label={`删除 ${d.title}`}

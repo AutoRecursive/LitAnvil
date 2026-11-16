@@ -138,7 +138,8 @@ app.post("/api/ui/ack", (req, res) => {
 const existingData = await readDb();
 if (await migrateLibrary(existingData, uploadsDir)) await writeDb(existingData);
 else await syncNotes(existingData);
-const session = new AgentRuntime(root, () => workspace.directory(), dataDir, undefined, { workspaceState: true });
+// Keep Codex/Agent state on the LitAnvil machine, never inside a configurable Obsidian vault.
+const session = new AgentRuntime(root, () => workspace.directory(), dataDir);
 const agentRoutes = createAgentRouter(session, async (body) => {
   const db = await readDb();
   const doc = activeDocuments(db).find(

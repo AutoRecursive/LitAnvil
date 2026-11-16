@@ -407,3 +407,5 @@ main { min-width: 0; }
 .selection-panel .chat-quote { margin:0 0 6px; }
 .selection-actions .highlight-action { background:var(--ink); border-color:var(--ink); color:var(--bg); }
 .selection-actions .highlight-action:hover:not(:disabled) { background:var(--ink); opacity:.8; }
+
+.document-priority { margin:0 6px 4px; border:1px solid var(--border); border-radius:6px; padding:4px 6px; background:var(--bg); color:var(--muted); font-size:11px; }

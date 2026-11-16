@@ -19,6 +19,7 @@ export type LibraryDocument = {
   topicId?: string | null;
   createdAt: string;
   progress: number;
+  priority?: "high" | "medium" | "low";
   content: string;
   htmlSnapshot?: string;
   fileUrl?: string;
@@ -128,6 +129,7 @@ function localFile(uploads: string, url?: string) {
 export async function migrateLibrary(db: LibraryDB, uploads: string) {
   let changed = false;
   for (const document of db.documents) {
+    if (!document.priority) { document.priority = "medium"; changed = true; }
     if (document.fileUrl && !document.contentHash) {
       const file = localFile(uploads, document.fileUrl);
       if (file)
@@ -380,6 +382,10 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         return res.status(400).json({ error: "阅读进度无效" });
       document.progress = Math.max(0, Math.min(1, req.body.progress));
     }
+    if (req.body.priority !== undefined) {
+      if (!["high", "medium", "low"].includes(req.body.priority)) return res.status(400).json({error:"优先级无效"});
+      document.priority = req.body.priority;
+    }
     if (req.body.topicId !== undefined) document.topicId = req.body.topicId;
     await save(res, db, document, req.body.title !== undefined || req.body.topicId !== undefined);
   });
@@ -586,6 +592,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         tags: url.hostname === "arxiv.org" ? ["paper"] : [],
         createdAt: cached?.createdAt || new Date().toISOString(),
         progress: cached?.progress || 0,
+        priority: cached?.priority || "medium",
         content: "",
         ...fields,
         contentHash: hash,
@@ -665,6 +672,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         tags: [],
         createdAt: new Date().toISOString(),
         progress: 0,
+        priority: "medium",
         fileUrl: "/uploads/" + path.basename(req.file.path),
         mimeType: ext === ".pdf" ? "application/pdf" : req.file.mimetype,
         contentHash: hash,

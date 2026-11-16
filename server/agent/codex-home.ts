@@ -58,8 +58,16 @@ export async function prepareCodexHome(workspace: string, storage: string, envir
       return undefined;
     });
     if (!previous) await fs.symlink(source,link);
-    else if (!previous.isSymbolicLink() || await fs.realpath(link) !== await fs.realpath(source))
+    else if (previous.isSymbolicLink()) {
+      const target = await fs.realpath(link).catch(() => undefined);
+      const expected = await fs.realpath(source);
+      if (target !== expected) {
+        await fs.unlink(link);
+        await fs.symlink(source,link);
+      }
+    } else {
       throw new Error("项目 Codex 登录文件与共享账户不一致，请检查 native-home/auth.json");
+    }
   }
   return {home, accountHome, environment:{...environment,CODEX_HOME:home}};
 }
