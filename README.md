@@ -2,6 +2,10 @@
 
 Local paper reader with persistent Codex and Claude sessions, PDF annotations, Markdown/math notes, and agent-controlled navigation.
 
+![LitAnvil reader showing a paper, topic labels, annotations, and an agent conversation](docs/images/reader.png)
+
+*Reader view with demonstration content. The example paper is [VideoTetris](https://videotetris.github.io/).*
+
 ## Run
 
 Install Node.js and the Codex / Claude Code CLIs you want to use, then complete their account login.
