@@ -24,6 +24,40 @@ beforeEach(() => {
 });
 afterEach(async () => {await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()});
 
+it('shows nested colored topics in the reader and moves documents between them',async()=>{
+ sessionStorage.setItem('litanvil-open-document','A');
+ const categorized=[{...documents[0],topicId:'child'},documents[1]];
+ const topics=[{id:'root',name:'视频生成',parentId:null,color:'#91a6b5'},{id:'child',name:'实时生成',parentId:'root',color:'#c99e9e'}];
+ request.mockImplementation(async(url:string)=>result(url.endsWith('/topics')?topics:url.endsWith('/documents')?categorized:url.endsWith('/project')?{directory:'/notes'}:[]));
+ await act(async()=>root.render(<App/>));
+ const sidebar=container.querySelector('.sidebar-documents')!;
+ const folders=[...sidebar.querySelectorAll('.topic-name')];
+ expect(folders.map(button=>button.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('视频生成'),expect.stringContaining('实时生成')]));
+ expect(folders[1].querySelector('svg')?.getAttribute('style')).toContain('rgb(201, 158, 158)');
+ expect(sidebar.querySelector('button[title="Paper A"]')).not.toBeNull();
+ await act(async()=>sidebar.querySelector<HTMLButtonElement>('button[aria-label="管理 Paper B 的标签"]')!.click());
+ const labels=container.querySelectorAll<HTMLInputElement>('.topic-tag-picker input');
+ await act(async()=>{labels[0].click();labels[1].click()});
+ await act(async()=>[...container.querySelectorAll('button')].find(button=>button.textContent==='保存标签')!.click());
+ expect(request.mock.calls.some(([url,init])=>url.endsWith('/documents/B')&&init?.method==='PATCH'&&JSON.stringify(JSON.parse(String(init.body)).topicIds)==='["root","child"]')).toBe(true);
+ expect(sidebar.querySelector('.topic-branch .topic-branch button[title="Paper B"]')).not.toBeNull();
+});
+
+it('keeps a selection while interacting with the comment editor and clears it on a blank reader click', async () => {
+ sessionStorage.setItem('litanvil-open-document','A');
+ await act(async()=>root.render(<App/>));
+ const text=container.querySelector('.paper-body p')!.firstChild!;
+ const range=document.createRange();range.selectNodeContents(text);
+ window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+ await act(async()=>container.querySelector('.paper-body p')!.dispatchEvent(new MouseEvent('mouseup',{bubbles:true})));
+ expect(container.querySelector('[aria-label="批注内容"]')).not.toBeNull();
+ await act(async()=>container.querySelector<HTMLTextAreaElement>('[aria-label="批注内容"]')!.focus());
+ expect(container.querySelector('[aria-label="批注内容"]')).not.toBeNull();
+ window.getSelection()!.removeAllRanges();
+ await act(async()=>container.querySelector('.paper')!.dispatchEvent(new MouseEvent('mouseup',{bubbles:true})));
+ expect(container.querySelector('[aria-label="批注内容"]')).toBeNull();
+});
+
 it('ignores annotation responses from a document that was closed or switched', async () => {
   let resolveA!: (value: unknown) => void;
   let resolveB!: (value: unknown) => void;
@@ -181,4 +215,29 @@ it('persists a changed annotation color from the editor', async () => {
  const update=request.mock.calls.find(([url,init])=>url.endsWith('/annotations/ann')&&init?.method==='PATCH');
  expect(JSON.parse(update![1].body)).toMatchObject({note:'Note',color:'#91a6b5'});
  expect(container.querySelector<HTMLElement>('.ann blockquote')?.style.borderLeftColor).toBe('rgb(145, 166, 181)');
+});
+
+it('does not duplicate an annotation when live sync arrives before the save response', async () => {
+  vi.useFakeTimers();
+  sessionStorage.setItem('litanvil-open-document', 'A');
+  const saved = {id:'saved',documentId:'A',quote:'body',note:'',location:'{}',color:'#c9b58f'};
+  let annotations: typeof saved[] = [];
+  let finishSave!: (value: unknown) => void;
+  request.mockImplementation(async (url:string, init?:RequestInit) => {
+    if (url.endsWith('/annotations') && init?.method === 'POST') return new Promise(resolve => { finishSave = resolve });
+    return result(url.endsWith('/documents') ? documents : url.endsWith('/annotations') ? annotations : url.endsWith('/project') ? {directory:'/notes'} : []);
+  });
+  await act(async () => root.render(<App/>));
+  const text = container.querySelector('.paper-body p')!.firstChild!;
+  const range = document.createRange(); range.selectNodeContents(text);
+  window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+  await act(async () => container.querySelector('.paper')!.dispatchEvent(new MouseEvent('mouseup',{bubbles:true})));
+  await act(async () => [...container.querySelectorAll('button')].find(button=>button.textContent==='保存高亮')!.click());
+  annotations = [saved];
+  const stream = [...streams.values()][0];
+  await act(async () => {stream.onmessage({data:'{"type":"library","data":{"revision":2}}'}); vi.advanceTimersByTime(80)});
+  expect(container.querySelectorAll('.ann')).toHaveLength(1);
+  await act(async () => finishSave(result(saved)));
+  expect(container.querySelectorAll('.ann')).toHaveLength(1);
+  window.getSelection()!.removeAllRanges();
 });

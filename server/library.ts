@@ -17,6 +17,7 @@ export type LibraryDocument = {
   sourceType: "web" | "arxiv" | "pdf" | "epub";
   tags: string[];
   topicId?: string | null;
+  topicIds?: string[];
   createdAt: string;
   progress: number;
   priority?: "high" | "medium" | "low";
@@ -282,7 +283,12 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
     const topic = topics.find(topic => topic.id === req.params.id);
     if (!topic) return res.status(404).json({error: "主题不存在"});
     for (const child of topics) if (child.parentId === topic.id) child.parentId = topic.parentId;
-    for (const document of db.documents) if (document.topicId === topic.id) document.topicId = topic.parentId;
+    for (const document of db.documents) {
+      if (document.topicIds) {
+        document.topicIds = [...new Set(document.topicIds.flatMap(id => id === topic.id ? (topic.parentId ? [topic.parentId] : []) : [id]))];
+        document.topicId = document.topicIds[0] || null;
+      } else if (document.topicId === topic.id) document.topicId = topic.parentId;
+    }
     db.topics = topics.filter(item => item.id !== topic.id);
     await save(res, db, {ok: true});
   });
@@ -369,6 +375,9 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
     if (!document) return res.status(404).json({ error: "文档不存在" });
     if (req.body.topicId !== undefined && req.body.topicId !== null && !(db.topics || []).some(topic => topic.id === req.body.topicId))
       return res.status(400).json({error: "主题不存在"});
+    if (req.body.topicIds !== undefined && (!Array.isArray(req.body.topicIds) || req.body.topicIds.some((id:unknown)=>typeof id !== 'string' || !(db.topics || []).some(topic=>topic.id===id))))
+      return res.status(400).json({error:'主题列表无效或主题不存在'});
+    if (req.body.topicId !== undefined && req.body.topicIds !== undefined) return res.status(400).json({error:'请使用一种主题设置方式'});
     if (req.body.title !== undefined) {
       if (typeof req.body.title !== "string" || !req.body.title.trim())
         return res.status(400).json({ error: "标题不能为空" });
@@ -386,8 +395,9 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
       if (!["high", "medium", "low"].includes(req.body.priority)) return res.status(400).json({error:"优先级无效"});
       document.priority = req.body.priority;
     }
-    if (req.body.topicId !== undefined) document.topicId = req.body.topicId;
-    await save(res, db, document, req.body.title !== undefined || req.body.topicId !== undefined);
+    if (req.body.topicIds !== undefined) {document.topicIds=[...new Set(req.body.topicIds as string[])];document.topicId=document.topicIds[0]||null;}
+    else if (req.body.topicId !== undefined) {document.topicId = req.body.topicId;document.topicIds=req.body.topicId?[req.body.topicId]:[];}
+    await save(res, db, document, req.body.title !== undefined || req.body.topicId !== undefined || req.body.topicIds !== undefined);
   });
   router.get("/documents/:id/annotations", async (req, res) => {
     const db = await read();
@@ -520,7 +530,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         ((cached.sourceType !== "arxiv" && cached.sourceType !== "pdf") ||
           readable)
       ) {
-        if (req.body.topicId !== undefined) cached.topicId = req.body.topicId;
+        if (req.body.topicId !== undefined) {cached.topicId = req.body.topicId;cached.topicIds=req.body.topicId?[req.body.topicId]:[];}
         delete cached.deletedAt;
         return await save(res, db, { ...cached, cached: true });
       }
@@ -549,7 +559,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
         } else cached ||= candidate;
       }
       if (duplicate) {
-        if (req.body.topicId !== undefined) duplicate.topicId = req.body.topicId;
+        if (req.body.topicId !== undefined) {duplicate.topicId = req.body.topicId;duplicate.topicIds=req.body.topicId?[req.body.topicId]:[];}
         delete duplicate.deletedAt;
         duplicate.sourceAliases = [
           ...new Set([...(duplicate.sourceAliases || []), normalized]),
@@ -651,7 +661,7 @@ export function createLibraryRouter({ uploads, read, write, onChange }: LibraryO
           cached.mimeType = "application/pdf";
           repaired = true;
         }
-        if (req.body.topicId !== undefined) cached.topicId = req.body.topicId;
+        if (req.body.topicId !== undefined) {cached.topicId = req.body.topicId;cached.topicIds=req.body.topicId?[req.body.topicId]:[];}
         delete cached.deletedAt;
         const response = await save(res, db, { ...cached, cached: true });
         saved = repaired;

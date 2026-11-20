@@ -136,6 +136,20 @@ it('renders each saved annotation using its color and updates it on edit', async
   expect(mark.style.backgroundColor).toBe('rgba(201, 158, 158, 0.44)');
 });
 
+it('keeps the active selection visible across zoom and removes it when cleared', async () => {
+ const location=JSON.stringify({rects:[{page:1,x:.1,y:.2,w:.3,h:.02}]});
+ const render=async (scale:number, selectionLocation:string)=>{
+  await act(async()=>root.render(<PdfReader src="/paper.pdf" scale={scale} selectionLocation={selectionLocation} onSelection={()=>{}}/>));
+  await act(async()=>vi.advanceTimersByTime(100));
+ };
+ await render(1.25,location);
+ expect(article.querySelectorAll('.active-pdf-selection')).toHaveLength(1);
+ await render(1.5,location);
+ expect(article.querySelectorAll('.active-pdf-selection')).toHaveLength(1);
+ await render(1.5,'');
+ expect(article.querySelectorAll('.active-pdf-selection')).toHaveLength(0);
+});
+
 it('cycles overlapping annotations once per click or double-click without blocking text selection', async () => {
  const onClick=vi.fn();
  const location=JSON.stringify({rects:[{page:1,x:.1,y:.2,w:.3,h:.02}]});

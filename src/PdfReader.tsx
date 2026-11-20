@@ -42,6 +42,25 @@ function paintAnnotations(container: HTMLElement, annotations: Annotation[]) {
   }
 }
 
+function paintSelection(container: HTMLElement, location: string) {
+  container.querySelectorAll('.active-pdf-selection').forEach(node => node.remove());
+  if (!location) return;
+  try {
+    const anchor = JSON.parse(location);
+    const exact = rectsFromTextRanges(container, anchor.textRanges);
+    const pages = new Set(exact.map(rect => rect.page));
+    const rects = [...exact, ...(anchor.rects || []).filter((rect: {page:number}) => !pages.has(rect.page))];
+    for (const rect of rects) {
+      const page = container.dataset.page === String(rect.page) ? container : container.querySelector<HTMLElement>(`.pdf-page[data-page="${rect.page}"]`);
+      if (!page) continue;
+      const mark = document.createElement('div');
+      mark.className = 'active-pdf-selection';
+      Object.assign(mark.style, {left:`${rect.x*100}%`,top:`${rect.y*100}%`,width:`${rect.w*100}%`,height:`${rect.h*100}%`});
+      page.append(mark);
+    }
+  } catch { /* Selections without PDF geometry have no overlay. */ }
+}
+
 export const PdfReader = React.memo(
   function PdfReader({
     src,
@@ -49,12 +68,14 @@ export const PdfReader = React.memo(
     onAnnotationClick,
     scale = 1.25,
     annotations = [],
+    selectionLocation = '',
   }: {
     src: string;
     onSelection: () => void;
     onAnnotationClick?: (id: string) => void;
     scale?: number;
     annotations?: Annotation[];
+    selectionLocation?: string;
   }) {
     const host = useRef<HTMLDivElement>(null);
     const cycle = useRef<{key:string; index:number} | null>(null);
@@ -74,6 +95,8 @@ export const PdfReader = React.memo(
     }
     const annotationsRef = useRef(annotations);
     annotationsRef.current = annotations;
+    const selectionRef = useRef(selectionLocation);
+    selectionRef.current = selectionLocation;
     const [width, setWidth] = useState(0);
     const [loaded, setLoaded] = useState<LoadedDocument | null>(null);
     const [status, setStatus] = useState("加载中…");
@@ -140,6 +163,9 @@ export const PdfReader = React.memo(
     useEffect(() => {
       if (host.current) paintAnnotations(host.current, annotations);
     }, [annotations]);
+    useEffect(() => {
+      if (host.current) paintSelection(host.current, selectionLocation);
+    }, [selectionLocation]);
 
     useLayoutEffect(() => {
       if (!loaded || loaded.src !== src || !width) return;
@@ -185,6 +211,7 @@ export const PdfReader = React.memo(
         scroller.scrollTop += box.top + box.height * fraction - top;
       }
       paintAnnotations(container, annotationsRef.current);
+      paintSelection(container, selectionRef.current);
       let cancelled = false;
       let rendering: ReturnType<pdfjsLib.PDFPageProxy["render"]> | undefined;
       const textLayers: TextLayerBuilder[] = [];
@@ -232,6 +259,7 @@ export const PdfReader = React.memo(
             if (!cancelled) {
               element.dataset.ready = "true";
               paintAnnotations(element, annotationsRef.current);
+              paintSelection(element, selectionRef.current);
               repaintPdfPreviews(element);
             }
           }
@@ -252,7 +280,7 @@ export const PdfReader = React.memo(
 
     return (
       <div
-        className="pdf-reader"
+        className={`pdf-reader${selectionLocation ? ' has-active-selection' : ''}`}
         data-source={loaded?.src === src ? src : undefined}
       >
         {status && <div className="pdf-status" role="status">{status}</div>}
@@ -261,5 +289,5 @@ export const PdfReader = React.memo(
     );
   },
   (a, b) =>
-    a.src === b.src && a.scale === b.scale && a.annotations === b.annotations && a.onAnnotationClick === b.onAnnotationClick,
+    a.src === b.src && a.scale === b.scale && a.annotations === b.annotations && a.onAnnotationClick === b.onAnnotationClick && a.selectionLocation === b.selectionLocation,
 );

@@ -1,6 +1,7 @@
 import React,{useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {paperNotes} from './paper-notes';
 import {Markdown} from './Markdown';
+import {subscribeLive} from './live';
 import type {PaperReference} from '../shared/paper-reference';
 
 export function Notebook({documentId,selectionLink,insertion,onInsert,onReference}:{
@@ -14,6 +15,7 @@ export function Notebook({documentId,selectionLink,insertion,onInsert,onReferenc
   const inserted=useRef<string | undefined>(undefined);
   const [pendingCursor,setPendingCursor]=useState<number>();
   useEffect(()=>{void store.load();return()=>{void store.save()}},[store]);
+  useEffect(()=>subscribeLive('library',store.refresh,{onOpen:store.refresh}),[store]);
   useEffect(()=>{
     if(!state.loaded||!insertion||inserted.current===insertion.id)return;
     inserted.current=insertion.id;

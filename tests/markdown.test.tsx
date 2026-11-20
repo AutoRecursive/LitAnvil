@@ -25,3 +25,12 @@ E = mc^2
   const html=renderToStaticMarkup(<Markdown>{source}</Markdown>);
   expect(html).toContain('katex-display');expect(html).toContain('x^2');expect(html).toContain('\\(keep raw\\)');
 });
+
+it('uses matching KaTeX styles for boxed equations and stretchy delimiters', async()=>{
+  const source=String.raw`\[\boxed{\nabla_\theta D_{\rm KL}(q_\theta\|p)=\mathbb E\left[(s_{\rm fake}-s_{\rm real})^\top\frac{\partial y}{\partial\theta}\right]}\]`;
+  const html=renderToStaticMarkup(<Markdown>{source}</Markdown>);
+  const css=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../node_modules/katex/dist/katex.css',import.meta.url),'utf8'));
+  expect(html).toContain('stretchy fbox');
+  expect(css).toMatch(/\.katex \.stretchy\s*\{[^}]*width:\s*100%/);
+  expect(html).not.toContain('katex-error');
+});

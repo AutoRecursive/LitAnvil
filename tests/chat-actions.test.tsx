@@ -60,3 +60,17 @@ it('places annotation actions above messages and outside the message composer',a
  expect(host.querySelector('.composer')?.textContent).not.toContain('保存高亮');
  expect(panel.nextElementSibling?.className).toBe('session-messages');
 });
+it('follows streamed output only while the reader is near the bottom and resumes after scrolling back',async()=>{
+ await mount();
+ const list=host.querySelector<HTMLElement>('.session-messages')!;
+ let height=1000;
+ Object.defineProperty(list,'scrollHeight',{configurable:true,get:()=>height});
+ Object.defineProperty(list,'clientHeight',{configurable:true,get:()=>400});
+ const update=async(text:string)=>act(async()=>live.receive!(state({status:'running',items:[{id:'m',type:'message',role:'assistant',text}]})));
+ list.scrollTop=550;list.dispatchEvent(new Event('scroll',{bubbles:true}));
+ height=1200;await update('first');expect(list.scrollTop).toBe(1200);
+ list.scrollTop=250;list.dispatchEvent(new Event('scroll',{bubbles:true}));
+ height=1500;await update('second');expect(list.scrollTop).toBe(250);
+ list.scrollTop=1040;list.dispatchEvent(new Event('scroll',{bubbles:true}));
+ height=1700;await update('third');expect(list.scrollTop).toBe(1700);
+});

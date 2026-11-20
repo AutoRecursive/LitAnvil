@@ -33,6 +33,7 @@ type Doc = {
   priority?: "high" | "medium" | "low";
   content: string;
   topicId?: string | null;
+  topicIds?: string[];
   htmlSnapshot?: string;
   fileUrl?: string;
 };
@@ -342,10 +343,18 @@ export function App() {
   function capture() {
     if (annotationPending) return;
     const sel = window.getSelection();
-    if (!sel?.rangeCount || !reader.current?.contains(sel.anchorNode)) return;
+    if (!sel?.rangeCount || sel.isCollapsed) {
+      if (selection) { setSelection(""); setSelectionLocation(""); setNote(""); }
+      return;
+    }
+    if (!reader.current?.contains(sel.anchorNode)) return;
     const text = sel.toString().trim();
     if (!text) return;
     const range = sel.getRangeAt(0);
+    const highlights = (globalThis.CSS as any)?.highlights;
+    const HighlightClass = (window as any).Highlight;
+    if (highlights && HighlightClass && !reader.current.querySelector('.pdf-reader'))
+      highlights.set('litanvil-selection', new HighlightClass(range.cloneRange()));
     setEditingAnn(null);
     setSelection(text);
     setSelectionLocation(JSON.stringify(pdfSelectionLocation(reader.current, range)));
@@ -353,6 +362,10 @@ export function App() {
     setNote("");
     setRightOpen(true);
   }
+  useEffect(() => {
+    if (!selection) (globalThis.CSS as any)?.highlights?.delete('litanvil-selection');
+  }, [selection]);
+  useEffect(() => () => { (globalThis.CSS as any)?.highlights?.delete('litanvil-selection'); }, [selected?.id]);
   const selectedReference=selected&&selection?selectionReference(selected.id,selectionLocation):undefined;
   function insertReference(){
     if(!selectedReference)return;
@@ -399,11 +412,8 @@ export function App() {
         }),
       });
       if (sessionStorage.getItem("litanvil-open-document") === documentId) {
-        setAnns((x) => [...x, a]);
-        setSelection("");
-        setSelectionLocation("");
+        setAnns((items) => items.some((item) => item.id === a.id) ? items : [...items, a]);
         setNote("");
-        window.getSelection()?.removeAllRanges();
       }
     } catch (e) {
       setError(String(e));
@@ -683,16 +693,9 @@ export function App() {
               </button>
               {documentsOpen && (
                 <div className="sidebar-documents">
-                  {filtered.map((d) => (
-                    <button
-                      key={d.id}
-                      title={d.title}
-                      className={selected?.id === d.id ? "active" : ""}
-                      onClick={() => openDocument(d)}
-                    >
-                      {d.title}
-                    </button>
-                  ))}
+                  <Topics compact docs={filtered} revision={topicRevision} selectedId={selected?.id} searching={Boolean(query.trim())} onError={setError}
+                    onOpen={id=>{const doc=docs.find(d=>d.id===id);if(doc)openDocument(doc)}}
+                    onMove={(id,topicIds)=>{setDocs(items=>items.map(doc=>doc.id===id?{...doc,topicIds,topicId:topicIds[0]||null}:doc));setSelected(doc=>doc?.id===id?{...doc,topicIds,topicId:topicIds[0]||null}:doc)}} />
                   {filtered.length === 0 && (
                     <p className="sidebar-empty">暂无文档</p>
                   )}
@@ -800,7 +803,7 @@ export function App() {
             <>
               <div className="welcome chat-home" ref={homeLayout} style={{"--home-share": `${homeShare}%`} as React.CSSProperties}>
                 <section className="home-library">
-                  <Topics docs={filtered} revision={topicRevision} onError={setError} onOpen={id=>{const doc=docs.find(d=>d.id===id);if(doc)openDocument(doc)}} />
+                  <Topics docs={filtered} revision={topicRevision} searching={Boolean(query.trim())} onError={setError} onMove={(id,topicIds)=>setDocs(items=>items.map(doc=>doc.id===id?{...doc,topicIds,topicId:topicIds[0]||null}:doc))} onOpen={id=>{const doc=docs.find(d=>d.id===id);if(doc)openDocument(doc)}} />
                   <div className="library-content">
                   <div className="library-head">
                     <b>
@@ -968,6 +971,7 @@ export function App() {
                         src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
+                        selectionLocation={selectionLocation}
                         annotations={anns}
                         onAnnotationClick={showAnnotation}
                       />
@@ -988,6 +992,7 @@ export function App() {
                         src={assetUrl(selected.fileUrl)}
                         scale={1.25 * zoom}
                         onSelection={capture}
+                        selectionLocation={selectionLocation}
                         annotations={anns}
                         onAnnotationClick={showAnnotation}
                       />

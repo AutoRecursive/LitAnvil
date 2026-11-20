@@ -6,10 +6,12 @@ export const libraryTools = [
   { name: "list_documents", description: "List active imported documents and their IDs.", inputSchema: { type: "object", properties: {} } },
   { name: "get_document", description: "Read a document's extracted text, metadata and annotations.", inputSchema: { type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"] } },
   { name: "get_annotations", description: "Read editable annotations. A highlight is an annotation with an empty note. Notes support Markdown and math.", inputSchema: { type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"] } },
+  { name: "get_reader_note", description: "Read the paper's Markdown notebook shown in the reader's 笔记 tab, including its revision. This is separate from annotations.", inputSchema: { type: "object", properties: { documentId: { type: "string" } }, required: ["documentId"] } },
+  { name: "update_reader_note", description: "Replace the paper notebook shown in the 笔记 tab. First call get_reader_note, preserve existing content unless asked otherwise, then provide the returned revision and the complete Markdown. On a revision conflict, read again and merge; never overwrite a newer version.", inputSchema: { type: "object", properties: { documentId: { type: "string" }, markdown: { type: "string" }, revision: { type: "integer", minimum: 0 } }, required: ["documentId", "markdown", "revision"] } },
   { name:"export_document",description:"Read an authoritative JSON or Markdown annotation export with a download URL. Does not save a file on the user's computer; control_reader download_annotations requests the browser download.",inputSchema:{type:"object",properties:{documentId:{type:"string"},format:{type:"string",enum:["json","markdown"]}},required:["documentId","format"]}},
   { name: "get_trash", description: "List recoverable deleted documents and annotations.", inputSchema: { type: "object", properties: {} } },
-  { name: "manage_document", description: "Import a URL (cached; arXiv/PDF/web), move a paper to topicId (null = unfiled), rename a document, move it to recoverable trash or restore it. Never permanently deletes files. UI tabs update automatically. Use control_reader to open the returned document ID.", inputSchema: { type: "object", properties: {
-    operation: { type: "string", enum: ["import", "rename", "move", "delete", "restore"] }, documentId: { type: "string" }, url: { type: "string" }, title: { type: "string" }, topicId: {type: ["string", "null"]},
+  { name: "manage_document", description: "Import, rename, organize or restore a paper. For move, use topicIds to set all topic labels (read existing labels first and preserve them when adding); [] clears them. Legacy topicId replaces all labels. Deletions are recoverable.", inputSchema: { type: "object", properties: {
+    operation: { type: "string", enum: ["import", "rename", "move", "delete", "restore"] }, documentId: { type: "string" }, url: { type: "string" }, title: { type: "string" }, topicId: {type: ["string", "null"]}, topicIds:{type:"array",items:{type:"string"}},
   }, required: ["operation"] } },
   { name: "manage_annotation", description: "Create, update, delete or restore editable annotations. Empty note means highlight; note accepts Markdown/math. For anchored PDF annotations, use the location returned by control_reader preview_text, preserving normalized rectangles. preview_text alone never saves a record. Deletion is recoverable. All tabs update automatically.", inputSchema: { type: "object", properties: {
     operation: { type: "string", enum: ["create", "update", "delete", "restore"] }, annotationId: { type: "string" }, documentId: { type: "string" }, quote: { type: "string" }, note: { type: "string" }, location: { type: "string" }, color: { type: "string" },
@@ -50,13 +52,17 @@ export async function callLibraryTool(name: string, args: Record<string, unknown
     case "list_documents": route = "/documents"; break;
     case "get_document": route = `/documents/${identifier("documentId")}`; break;
     case "get_annotations": route = `/documents/${identifier("documentId")}/annotations`; break;
+    case "get_reader_note": route = `/documents/${identifier("documentId")}/reader-note`; break;
+    case "update_reader_note":
+      if (typeof args.markdown !== 'string' || !Number.isSafeInteger(args.revision) || (args.revision as number) < 0) throw new Error('Invalid notebook markdown or revision');
+      route = `/documents/${identifier("documentId")}/reader-note`; method = 'PATCH'; body = {markdown:args.markdown, revision:args.revision}; break;
     case "get_trash": route = "/trash"; break;
     case "manage_document":
       switch (args.operation) {
         case "import": route = "/import/url"; method = "POST"; body = { url: required("url"), ...(args.topicId !== undefined ? {topicId: args.topicId} : {}) }; break;
         case "move":
-          if (args.topicId === undefined) throw new Error("Missing topicId (use null for unfiled)");
-          route = `/documents/${identifier("documentId")}`; method = "PATCH"; body = {topicId: args.topicId}; break;
+          if (args.topicId === undefined && args.topicIds === undefined) throw new Error("Missing topicIds");
+          route = `/documents/${identifier("documentId")}`; method = "PATCH"; body = args.topicIds !== undefined ? {topicIds:args.topicIds} : {topicId: args.topicId}; break;
         case "rename": route = `/documents/${identifier("documentId")}`; method = "PATCH"; body = { title: required("title") }; break;
         case "delete": route = `/documents/${identifier("documentId")}`; method = "DELETE"; break;
         case "restore": route = `/documents/${identifier("documentId")}/restore`; method = "POST"; break;
@@ -86,5 +92,5 @@ export async function callLibraryTool(name: string, args: Record<string, unknown
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || `Library operation failed (${response.status})`);
-  return name === "list_documents" ? result.map(({ id, title, source, sourceType, progress, topicId }: any) => ({ id, title, source, sourceType, progress, topicId: topicId ?? null })) : result;
+  return name === "list_documents" ? result.map(({ id, title, source, sourceType, progress, topicId, topicIds }: any) => ({ id, title, source, sourceType, progress, topicId: topicId ?? null, topicIds:topicIds ?? (topicId?[topicId]:[]) })) : result;
 }

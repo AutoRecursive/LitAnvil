@@ -1,6 +1,6 @@
 export type PdfRect = { page: number; x: number; y: number; w: number; h: number };
 type Position = { node: Text; start: number; end: number };
-export type PdfTextRange = { page: number; node: number; start: number; end: number };
+export type PdfTextRange = { page: number; node: number; start: number; end: number; text?: string };
 export type PdfTextMatch = { element: HTMLElement; rects: PdfRect[]; textRanges: PdfTextRange[] };
 function pagesIn(root: HTMLElement) { return root.matches('.pdf-page') ? [root] : [...root.querySelectorAll<HTMLElement>('.pdf-page')]; }
 
@@ -59,8 +59,28 @@ export function finishPdfTextSelection(root: HTMLElement, target: EventTarget | 
   const box = nearest.parentElement!.getBoundingClientRect();
   // Only correct whitespace beside a line. Do not pull selections across paragraph/page gaps.
   if (y < box.top || y > box.bottom) return;
+  // Do not snap to a different column merely because it is on the same line.
+  if (x < box.left - Math.max(30, box.height * 3) || x > box.right + Math.max(30, box.height * 3)) return;
   const rtl = getComputedStyle(nearest.parentElement!).direction === 'rtl';
-  const offset = x <= box.left ? (rtl ? nearest.length : 0) : x >= box.right ? (rtl ? 0 : nearest.length) : undefined;
+  let offset = x <= box.left ? (rtl ? nearest.length : 0) : x >= box.right ? (rtl ? 0 : nearest.length) : undefined;
+  if (offset === undefined) {
+    // Transparent text-layer gaps can still be inside a span's bounding box.
+    // Measure graphemes, rather than guessing from the span's average width.
+    const segments = typeof Intl.Segmenter === 'function'
+      ? [...new Intl.Segmenter(undefined, {granularity:'grapheme'}).segment(nearest.data)].map(part => ({start:part.index,end:part.index+part.segment.length}))
+      : Array.from(nearest.data).reduce<{start:number;end:number}[]>((parts, character) => {
+        const start = parts.at(-1)?.end || 0; parts.push({start,end:start+character.length}); return parts;
+      }, []);
+    let best = Infinity;
+    for (const segment of segments) {
+      const range = document.createRange(); range.setStart(nearest,segment.start); range.setEnd(nearest,segment.end);
+      for (const glyph of range.getClientRects()) {
+        if (!glyph.width || !glyph.height || y < glyph.top || y > glyph.bottom) continue;
+        const d = distance(glyph);
+        if (d < best) { best=d; offset = (x < (glyph.left+glyph.right)/2) !== rtl ? segment.start : segment.end; }
+      }
+    }
+  }
   if (offset !== undefined) selection.extend(nearest, offset);
 }
 
@@ -100,7 +120,7 @@ export function findPdfText(reader: HTMLElement, query: string, pageNumber?: num
       }
       const rects = segmentsToRects(page, segments);
       if (rects.length) matches.push({element: segments[0].node.parentElement!, rects,
-        textRanges: segments.map(segment => ({page: Number(page.dataset.page), node: nodes.indexOf(segment.node), start: segment.start, end: segment.end})),
+        textRanges: segments.map(segment => ({page: Number(page.dataset.page), node: nodes.indexOf(segment.node), start: segment.start, end: segment.end, text: segment.node.data.slice(segment.start,segment.end)})),
       });
     }
   }
@@ -116,13 +136,14 @@ export function rectsFromTextRanges(root: HTMLElement, ranges: PdfTextRange[]): 
     if (page.dataset.ready !== 'true') continue;
     const nodes = textNodes(page);
     const segments: Position[] = [];
-    for (const range of ranges) {
-      if (range.page !== Number(page.dataset.page)) continue;
+    const pageRanges = ranges.filter(range => range.page === Number(page.dataset.page));
+    let valid = true;
+    for (const range of pageRanges) {
       const node = nodes[range.node];
-      if (!node || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end > node.length || range.end <= range.start) continue;
+      if (!node || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end > node.length || range.end <= range.start || (typeof range.text === 'string' && node.data.slice(range.start,range.end) !== range.text)) { valid = false; break; }
       segments.push({node, start:range.start, end:range.end});
     }
-    result.push(...segmentsToRects(page, segments));
+    if (valid) result.push(...segmentsToRects(page, segments));
   }
   return result;
 }
@@ -132,7 +153,7 @@ export function pdfSelectionLocation(reader: HTMLElement, selection: Range) {
     if (!selection.intersectsNode(node)) return;
     const start = selection.startContainer === node ? selection.startOffset : 0;
     const end = selection.endContainer === node ? selection.endOffset : node.length;
-    if (end > start) textRanges.push({page:Number(page.dataset.page),node:index,start,end});
+    if (end > start) textRanges.push({page:Number(page.dataset.page),node:index,start,end,text:node.data.slice(start,end)});
   });
   return {version:2,rects:rectsFromTextRanges(reader,textRanges),textRanges};
 }

@@ -5,6 +5,7 @@ export class PaperNotes {
   private listeners=new Set<()=>void>();
   private timer:ReturnType<typeof setTimeout>|undefined;
   private loading?:Promise<void>;
+  private refreshPending=false;
   private state:NoteSnapshot={markdown:'',revision:0,loaded:false,dirty:false,saving:false,error:'',conflict:false};
   constructor(private id:string){
     try{const s=JSON.parse(localStorage.getItem(this.key)||'null');
@@ -19,10 +20,21 @@ export class PaperNotes {
     try{localStorage.setItem(this.key,JSON.stringify({markdown:this.state.markdown,revision:this.state.revision,dirty:this.state.dirty}))}catch{}
     this.listeners.forEach(fn=>fn());
   }
-  load=()=>this.loading ||= this.fetch().finally(()=>{this.loading=undefined});
+  load=()=>this.loading ||= this.fetch().finally(()=>{this.loading=undefined;this.flushRefresh()});
+  refresh=()=>{
+    if(this.loading||this.state.saving){this.refreshPending=true;return;}
+    void this.load();
+  };
+  private flushRefresh(){
+    if(!this.refreshPending||this.loading||this.state.saving)return;
+    this.refreshPending=false;void this.load();
+  }
   private async fetch(){
     try{
       const note:ServerNote=await api(`/documents/${encodeURIComponent(this.id)}/reader-note`);
+      // A response started before a local save must not roll the saved revision back.
+      if(this.state.saving){this.refreshPending=true;return;}
+      if(note.revision<this.state.revision)return;
       if(this.state.dirty&&this.state.markdown!==note.markdown){
         if(this.state.revision!==note.revision){this.update({loaded:true,conflict:true,error:'笔记已有其他版本，本地草稿已保留'});return;}
         this.update({loaded:true,error:'',conflict:false});this.schedule();
@@ -46,7 +58,7 @@ export class PaperNotes {
       success=true;
       this.update({revision:result.revision,dirty:this.state.markdown!==markdown});
     }catch(error){this.update({error:String(error)});}
-    finally{this.update({saving:false});if(success&&this.state.dirty)this.schedule();}
+    finally{this.update({saving:false});if(success&&this.state.dirty)this.schedule();this.flushRefresh();}
   };
   useServerVersion=async()=>{
     try{const note:ServerNote=await api(`/documents/${encodeURIComponent(this.id)}/reader-note`);

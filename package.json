@@ -20,7 +20,7 @@
     "cors": "latest",
     "express": "latest",
     "jsdom": "latest",
-    "katex": "^0.19.1",
+    "katex": "0.16.47",
     "multer": "latest",
     "pdf-parse": "latest",
     "pdfjs-dist": "^6.5.438",

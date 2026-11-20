@@ -1,7 +1,7 @@
 import { chatDrafts, useChatDraft } from "./chat-draft";
 import { arxivLink } from "../shared/import-url";
 import { subscribeLive } from "./live";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Markdown } from "./Markdown";
 import { ResizeHandle } from "./ResizeHandle";
 import { paneBounds, paneDefaults } from "../shared/reader-layout";
@@ -58,6 +58,11 @@ export function Chat({
   const stopLock = useRef(false);
   const [stopping, setStopping] = useState(false);
   const list = useRef<HTMLDivElement>(null);
+  const messages = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
+  const scrollToBottom = () => {
+    if (followBottom.current && list.current) list.current.scrollTop = list.current.scrollHeight;
+  };
   useEffect(() => {
     const unsubscribe = subscribeLive("agent", setState, { onError: () => setState(s => ({ ...s, status: "connecting" })) });
     fetch(API + "/agent/providers")
@@ -69,9 +74,14 @@ export function Chat({
       .catch((error) => setError(String(error)));
     return unsubscribe;
   }, []);
+  useLayoutEffect(scrollToBottom, [state]);
   useEffect(() => {
-    if (list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [state]);
+    if (typeof ResizeObserver === 'undefined' || !list.current || !messages.current) return;
+    const observer = new ResizeObserver(scrollToBottom);
+    observer.observe(list.current);
+    observer.observe(messages.current);
+    return () => observer.disconnect();
+  }, []);
   async function action(name: string, body: any = {}) {
     if (name === "stop" ? stopLock.current : requestLock.current) return false;
     if (name === "stop") { stopLock.current = true; setStopping(true); }
@@ -176,7 +186,11 @@ export function Chat({
         {quote && <blockquote className="chat-quote">{quote}</blockquote>}
         {children}
       </div>}
-      <div className="session-messages" ref={list}>
+      <div className="session-messages" ref={list} onScroll={event => {
+        const element = event.currentTarget;
+        followBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop <= 80;
+      }}>
+        <div ref={messages}>
         {state.items.length === 0 && (
           <div className="session-empty">有什么想一起研究的？</div>
         )}
@@ -186,6 +200,7 @@ export function Chat({
         {busy && (
           <div className="session-progress">{providerLabel} 正在处理…</div>
         )}
+        </div>
       </div>
       {(error || state.error) && (
         <div className="session-error" role="alert">

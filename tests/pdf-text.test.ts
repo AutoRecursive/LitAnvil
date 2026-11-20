@@ -67,7 +67,7 @@ it('captures precise selection offsets across spans and pages, independently of 
   range.setEnd(second.querySelector('span')!.firstChild!,9);
   const location=pdfSelectionLocation(reader,range);
   expect(location.version).toBe(2);
-  expect(location.textRanges).toEqual([{page:1,node:0,start:7,end:15},{page:2,node:0,start:0,end:9}]);
+  expect(location.textRanges).toEqual([{page:1,node:0,start:7,end:15,text:'selected'},{page:2,node:0,start:0,end:9,text:'continued'}]);
   expect(location.rects).toHaveLength(2);
   expect(location.rects[0].w).toBe(0.08);
 });
@@ -100,7 +100,26 @@ it('finishes a whitespace drag at the text line edge instead of an unrelated fol
  selection.setBaseAndExtent(nodes[0].firstChild!,0,nodes[1].firstChild!,5);
  finishPdfTextSelection(reader,document.querySelector('.textLayer'),200,225);
  expect(selection.toString()).toBe('Paper title');
- expect(pdfSelectionLocation(reader,selection.getRangeAt(0)).textRanges).toEqual([{page:1,node:0,start:0,end:11}]);
+ expect(pdfSelectionLocation(reader,selection.getRangeAt(0)).textRanges).toEqual([{page:1,node:0,start:0,end:11,text:'Paper title'}]);
+});
+it('uses the nearest grapheme when whitespace falls inside a text span, without snapping to a distant column',()=>{
+ const document=page(1,[{text:'A😀BC',x:120,y:220},{text:'Other',x:400,y:220}]);
+ const nodes=document.querySelectorAll('span'); const selection=window.getSelection()!;
+ selection.setBaseAndExtent(nodes[0].firstChild!,0,nodes[1].firstChild!,3);
+ finishPdfTextSelection(reader,document.querySelector('.textLayer'),132,225);
+ expect(selection.toString()).toBe('A😀');
+ selection.setBaseAndExtent(nodes[0].firstChild!,0,nodes[0].firstChild!,1);
+ finishPdfTextSelection(reader,document.querySelector('.textLayer'),300,225);
+ expect(selection.toString()).toBe('A');
+});
+it('keeps fallback geometry for a whole page when saved text items have changed',()=>{
+ const document=page(1,[{text:'one',x:120,y:220},{text:'two',x:140,y:220}]);
+ const match=findPdfText(reader,'onetwo')[0];
+ expect(rectsFromTextRanges(reader,match.textRanges)).toHaveLength(2);
+ document.querySelectorAll('span')[1].textContent='six';
+ expect(rectsFromTextRanges(reader,match.textRanges)).toEqual([]);
+ // Old annotations without text snapshots remain compatible.
+ expect(rectsFromTextRanges(reader,[{page:1,node:0,start:0,end:3}])).toHaveLength(1);
 });
 it('preserves reverse selections and leaves real text targets and paragraph gaps to the browser',()=>{
  const document=page(1,[{text:'Paper title',x:120,y:220},{text:'Authors',x:100,y:260}]);
