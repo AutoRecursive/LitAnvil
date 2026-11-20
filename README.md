@@ -1,10 +1,46 @@
 # LitAnvil
 
-Local paper reader with persistent Codex and Claude sessions, PDF annotations, Markdown/math notes, and agent-controlled navigation.
+**An AI-native workspace for reading and organizing research.**
+
+LitAnvil gives your research agent access to the same library, papers, annotations, and notes you use. Ask it to investigate a question, find related work in your library, organize papers into topics, navigate to evidence, and write up what you learned. The results become part of your workspace and remain editable in the reader.
 
 ![LitAnvil reader showing a paper, topic labels, annotations, and an agent conversation](docs/images/reader.png)
 
 *Reader view with demonstration content. The example paper is [VideoTetris](https://videotetris.github.io/).*
+
+## Built for an agent to work alongside you
+
+Reading tools and agent tools share the same underlying library. The agent can inspect and operate the reader through LitAnvil's MCP interface, while you can review and edit the results in the interface:
+
+- **Navigate the paper:** open documents, go to a page, adjust the reader, and preview matching passages. A preview is temporary; it becomes an annotation only when saved.
+- **Work with evidence:** read, create, edit, delete, and restore highlights and annotations. Notes accept Markdown and math, and PDF annotations can be anchored to the text.
+- **Maintain the notebook:** read and update a paper's Markdown research note. Revision checks protect concurrent edits, and open readers synchronize changes.
+- **Organize the library:** import a paper from a URL, rename or restore it, create nested topics, and assign multiple colored topic labels. Ask the agent to organize papers by research area or method; you can adjust the result yourself.
+- **Retrieve across papers:** search the project knowledge index for relevant passages and find similar papers, then open the source document to examine the evidence.
+
+For example, you can ask:
+
+> Find papers in my library about consistency distillation, compare their approaches, highlight the relevant passages, and save a summary to this paper's notes.
+
+> Organize these papers under video generation, with subtopics for real-time generation and distribution matching. Add the relevant labels to each paper.
+
+> Open the paper, go to the experimental results, and show me where the authors compare the training costs.
+
+The agent acts through explicit tools; it does not need to simulate mouse clicks to make these changes. The library, notes, and UI stay useful on their own, and destructive library operations are recoverable from the recycle bin.
+
+## Research retrieval (RAG)
+
+LitAnvil can use QMD as a project-scoped retrieval index over the configured notes directory's `papers/` collection. The index is updated as the library is synchronized. The agent can search by keyword or use semantic search when embeddings are available; similar-paper search falls back to keyword candidates when vector search returns no results. Results contain source information and snippets for the agent to follow up against the original document.
+
+Install the `qmd` CLI separately and make it available on the service's `PATH`, or set `QMD_BIN` to its executable path. Retrieval requires QMD; reading, annotation, and chat remain available without it. Set `LITANVIL_QMD=off` to disable the integration. The index is scoped to the selected notes workspace, so separate projects have separate indexes.
+
+## Your workspace
+
+- **Paper reader:** import arXiv links and PDFs, or upload PDF, Markdown, and text files; read the document next to the conversation.
+- **Library that grows with your research:** use nested topics, multiple colored tags, priorities, and drag-and-drop organization.
+- **Connected notes and annotations:** keep highlights, comments, and a Markdown notebook with the paper. Configure a notes directory, including an Obsidian vault, for local Markdown exports.
+- **Persistent agent sessions:** use your installed Codex or Claude Code CLI, with sessions separated by workspace and provider.
+- **An adjustable reading layout:** resize the reader, conversation, and directory panels; switch between light and dark themes.
 
 ## Run
 
